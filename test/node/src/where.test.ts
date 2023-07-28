@@ -9,6 +9,7 @@ import {
   testSql,
   expect,
   insertDefaultDataSet,
+  NOT_SUPPORTED,
 } from './test-setup.js'
 
 for (const dialect of DIALECTS) {
@@ -274,8 +275,8 @@ for (const dialect of DIALECTS) {
           .selectFrom('person')
           .selectAll()
           .where(
-            (qb) =>
-              qb
+            (eb) =>
+              eb
                 .selectFrom('pet')
                 .select('pet.name')
                 .whereRef('owner_id', '=', 'person.id'),
@@ -310,12 +311,50 @@ for (const dialect of DIALECTS) {
         ])
       })
 
+      it('a boolean subquery', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .selectAll()
+          .where((eb) =>
+            eb
+              .selectFrom('pet')
+              .whereRef('owner_id', '=', 'person.id')
+              .select((eb) => eb('pet.name', '=', 'Doggo').as('is_doggo'))
+          )
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select * from "person" where (select "pet"."name" = $1 as "is_doggo" from "pet" where "owner_id" = "person"."id")',
+            parameters: ['Doggo'],
+          },
+          mysql: {
+            sql: 'select * from `person` where (select `pet`.`name` = ? as `is_doggo` from `pet` where `owner_id` = `person`.`id`)',
+            parameters: ['Doggo'],
+          },
+          sqlite: {
+            sql: 'select * from "person" where (select "pet"."name" = ? as "is_doggo" from "pet" where "owner_id" = "person"."id")',
+            parameters: ['Doggo'],
+          },
+        })
+
+        const persons = await query.execute()
+        expect(persons).to.have.length(1)
+        expect(persons[0].id).to.be.a('number')
+        expect(persons).to.containSubset([
+          {
+            first_name: 'Arnold',
+            last_name: 'Schwarzenegger',
+            gender: 'male',
+          },
+        ])
+      })
+
       it('a raw instance and a subquery', async () => {
         const query = ctx.db
           .selectFrom('person')
           .selectAll()
-          .where(sql`${'Catto'}`, '=', (qb) =>
-            qb
+          .where(sql`${'Catto'}`, '=', (eb) =>
+            eb
               .selectFrom('pet')
               .select('pet.name')
               .whereRef('owner_id', '=', 'person.id')
@@ -416,7 +455,98 @@ for (const dialect of DIALECTS) {
         ])
       })
 
-      it('two where clauses', async () => {
+      it('a `where in` query with tuples', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .selectAll()
+          .where((eb) =>
+            eb(eb.refTuple('first_name', 'last_name'), 'in', [
+              eb.tuple('Jennifer', 'Aniston'),
+              eb.tuple('Sylvester', 'Stallone'),
+            ])
+          )
+          .orderBy('first_name asc')
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select * from "person" where ("first_name", "last_name") in (($1, $2), ($3, $4)) order by "first_name" asc',
+            parameters: ['Jennifer', 'Aniston', 'Sylvester', 'Stallone'],
+          },
+          mysql: {
+            sql: 'select * from `person` where (`first_name`, `last_name`) in ((?, ?), (?, ?)) order by `first_name` asc',
+            parameters: ['Jennifer', 'Aniston', 'Sylvester', 'Stallone'],
+          },
+          sqlite: {
+            sql: 'select * from "person" where ("first_name", "last_name") in ((?, ?), (?, ?)) order by "first_name" asc',
+            parameters: ['Jennifer', 'Aniston', 'Sylvester', 'Stallone'],
+          },
+        })
+
+        const persons = await query.execute()
+        expect(persons).to.have.length(2)
+        expect(persons).to.containSubset([
+          {
+            first_name: 'Jennifer',
+            last_name: 'Aniston',
+            gender: 'female',
+          },
+          {
+            first_name: 'Sylvester',
+            last_name: 'Stallone',
+            gender: 'male',
+          },
+        ])
+      })
+
+      it('a `where in` query with tuples and a subquery', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .selectAll()
+          .where((eb) =>
+            eb(
+              eb.refTuple('first_name', 'last_name'),
+              'in',
+              eb
+                .selectFrom('person as p2')
+                .select(['p2.first_name', 'p2.last_name'])
+                .where('first_name', 'in', ['Arnold', 'Sylvester'])
+                .$asTuple('first_name', 'last_name')
+            )
+          )
+          .orderBy('first_name asc')
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select * from "person" where ("first_name", "last_name") in (select "p2"."first_name", "p2"."last_name" from "person" as "p2" where "first_name" in ($1, $2)) order by "first_name" asc',
+            parameters: ['Arnold', 'Sylvester'],
+          },
+          mysql: {
+            sql: 'select * from `person` where (`first_name`, `last_name`) in (select `p2`.`first_name`, `p2`.`last_name` from `person` as `p2` where `first_name` in (?, ?)) order by `first_name` asc',
+            parameters: ['Arnold', 'Sylvester'],
+          },
+          sqlite: {
+            sql: 'select * from "person" where ("first_name", "last_name") in (select "p2"."first_name", "p2"."last_name" from "person" as "p2" where "first_name" in (?, ?)) order by "first_name" asc',
+            parameters: ['Arnold', 'Sylvester'],
+          },
+        })
+
+        const persons = await query.execute()
+        expect(persons).to.have.length(2)
+        expect(persons).to.containSubset([
+          {
+            first_name: 'Arnold',
+            last_name: 'Schwarzenegger',
+            gender: 'male',
+          },
+          {
+            first_name: 'Sylvester',
+            last_name: 'Stallone',
+            gender: 'male',
+          },
+        ])
+      })
+
+      it('two where expressions', async () => {
         const query = ctx.db
           .selectFrom('person')
           .selectAll()
@@ -449,14 +579,14 @@ for (const dialect of DIALECTS) {
         ])
       })
 
-      it('single function argument should provide an expression builder', async () => {
+      it('`and where` using the expression builder', async () => {
         const query = ctx.db
           .selectFrom('person')
           .selectAll()
-          .where(({ and, cmpr, fn }) =>
-            and([
-              cmpr('first_name', '=', 'Jennifer'),
-              cmpr(fn('upper', ['last_name']), '=', 'ANISTON'),
+          .where((eb) =>
+            eb.and([
+              eb('first_name', '=', 'Jennifer'),
+              eb(eb.fn('upper', ['last_name']), '=', 'ANISTON'),
             ])
           )
 
@@ -486,28 +616,30 @@ for (const dialect of DIALECTS) {
         ])
       })
 
-      it('single function argument should create a group', async () => {
+      it('`and where` using the expression builder and chaining', async () => {
         const query = ctx.db
           .selectFrom('person')
           .selectAll()
-          .where((qb) =>
-            qb
-              .where('first_name', '=', 'Jennifer')
-              .where('last_name', '=', 'Aniston')
+          .where((eb) =>
+            eb('first_name', '=', 'Jennifer').and(
+              eb.fn('upper', ['last_name']),
+              '=',
+              'ANISTON'
+            )
           )
 
         testSql(query, dialect, {
           postgres: {
-            sql: 'select * from "person" where ("first_name" = $1 and "last_name" = $2)',
-            parameters: ['Jennifer', 'Aniston'],
+            sql: 'select * from "person" where ("first_name" = $1 and upper("last_name") = $2)',
+            parameters: ['Jennifer', 'ANISTON'],
           },
           mysql: {
-            sql: 'select * from `person` where (`first_name` = ? and `last_name` = ?)',
-            parameters: ['Jennifer', 'Aniston'],
+            sql: 'select * from `person` where (`first_name` = ? and upper(`last_name`) = ?)',
+            parameters: ['Jennifer', 'ANISTON'],
           },
           sqlite: {
-            sql: 'select * from "person" where ("first_name" = ? and "last_name" = ?)',
-            parameters: ['Jennifer', 'Aniston'],
+            sql: 'select * from "person" where ("first_name" = ? and upper("last_name") = ?)',
+            parameters: ['Jennifer', 'ANISTON'],
           },
         })
 
@@ -522,12 +654,213 @@ for (const dialect of DIALECTS) {
         ])
       })
 
+      it('`and where` using the expression builder and a filter object', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .selectAll()
+          .where((eb) =>
+            eb.and({
+              first_name: 'Jennifer',
+              last_name: eb.fn<string>('upper', ['first_name']),
+            })
+          )
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select * from "person" where ("first_name" = $1 and "last_name" = upper("first_name"))',
+            parameters: ['Jennifer'],
+          },
+          mysql: {
+            sql: 'select * from `person` where (`first_name` = ? and `last_name` = upper(`first_name`))',
+            parameters: ['Jennifer'],
+          },
+          sqlite: {
+            sql: 'select * from "person" where ("first_name" = ? and "last_name" = upper("first_name"))',
+            parameters: ['Jennifer'],
+          },
+        })
+
+        const persons = await query.execute()
+        expect(persons).to.have.length(0)
+      })
+
+      it('`or where` using the expression builder', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .selectAll()
+          .where(({ or, eb }) =>
+            or([
+              eb('first_name', '=', 'Jennifer'),
+              eb(eb.fn('upper', ['last_name']), '=', 'ANISTON'),
+            ])
+          )
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select * from "person" where ("first_name" = $1 or upper("last_name") = $2)',
+            parameters: ['Jennifer', 'ANISTON'],
+          },
+          mysql: {
+            sql: 'select * from `person` where (`first_name` = ? or upper(`last_name`) = ?)',
+            parameters: ['Jennifer', 'ANISTON'],
+          },
+          sqlite: {
+            sql: 'select * from "person" where ("first_name" = ? or upper("last_name") = ?)',
+            parameters: ['Jennifer', 'ANISTON'],
+          },
+        })
+
+        const persons = await query.execute()
+        expect(persons).to.have.length(1)
+        expect(persons).to.containSubset([
+          {
+            first_name: 'Jennifer',
+            last_name: 'Aniston',
+            gender: 'female',
+          },
+        ])
+      })
+
+      it('`or where` using the expression builder and chaining', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .selectAll()
+          .where((eb) =>
+            eb('first_name', '=', 'Jennifer').or(
+              eb.fn('upper', ['last_name']),
+              '=',
+              'ANISTON'
+            )
+          )
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select * from "person" where ("first_name" = $1 or upper("last_name") = $2)',
+            parameters: ['Jennifer', 'ANISTON'],
+          },
+          mysql: {
+            sql: 'select * from `person` where (`first_name` = ? or upper(`last_name`) = ?)',
+            parameters: ['Jennifer', 'ANISTON'],
+          },
+          sqlite: {
+            sql: 'select * from "person" where ("first_name" = ? or upper("last_name") = ?)',
+            parameters: ['Jennifer', 'ANISTON'],
+          },
+        })
+
+        const persons = await query.execute()
+        expect(persons).to.have.length(1)
+        expect(persons).to.containSubset([
+          {
+            first_name: 'Jennifer',
+            last_name: 'Aniston',
+            gender: 'female',
+          },
+        ])
+      })
+
+      it('subquery exists', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .selectAll()
+          .where(({ exists, selectFrom, lit }) =>
+            exists(
+              selectFrom('pet')
+                .select(lit(1).as('exists'))
+                .whereRef('pet.owner_id', '=', 'person.id')
+            )
+          )
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select * from "person" where exists (select 1 as "exists" from "pet" where "pet"."owner_id" = "person"."id")',
+            parameters: [],
+          },
+          mysql: {
+            sql: 'select * from `person` where exists (select 1 as `exists` from `pet` where `pet`.`owner_id` = `person`.`id`)',
+            parameters: [],
+          },
+          sqlite: {
+            sql: 'select * from "person" where exists (select 1 as "exists" from "pet" where "pet"."owner_id" = "person"."id")',
+            parameters: [],
+          },
+        })
+
+        const persons = await query.execute()
+        expect(persons).to.have.length(3)
+      })
+
+      it('subquery not exists', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .selectAll()
+          .where(({ not, exists, selectFrom }) =>
+            not(
+              exists(
+                selectFrom('pet')
+                  .select('pet.id')
+                  .whereRef('pet.owner_id', '=', 'person.id')
+              )
+            )
+          )
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select * from "person" where not exists (select "pet"."id" from "pet" where "pet"."owner_id" = "person"."id")',
+            parameters: [],
+          },
+          mysql: {
+            sql: 'select * from `person` where not exists (select `pet`.`id` from `pet` where `pet`.`owner_id` = `person`.`id`)',
+            parameters: [],
+          },
+          sqlite: {
+            sql: 'select * from "person" where not exists (select "pet"."id" from "pet" where "pet"."owner_id" = "person"."id")',
+            parameters: [],
+          },
+        })
+
+        const persons = await query.execute()
+        expect(persons).to.have.length(0)
+      })
+
+      it('case expression', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .selectAll()
+          .where((eb) =>
+            eb
+              .case()
+              .when('first_name', '=', 'Jennifer')
+              .then(sql.lit(true))
+              .else(sql.lit(false))
+              .end()
+          )
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select * from "person" where case when "first_name" = $1 then true else false end',
+            parameters: ['Jennifer'],
+          },
+          mysql: {
+            sql: 'select * from `person` where case when `first_name` = ? then true else false end',
+            parameters: ['Jennifer'],
+          },
+          sqlite: {
+            sql: 'select * from "person" where case when "first_name" = ? then true else false end',
+            parameters: ['Jennifer'],
+          },
+        })
+
+        const persons = await query.execute()
+        expect(persons).to.have.length(1)
+      })
+
       it('single raw instance', async () => {
         const query = ctx.db
           .selectFrom('person')
           .selectAll()
-          .where(sql`first_name between ${'Arnold'} and ${'Jennifer'}`)
-          .where(sql`last_name between ${'A'} and ${'Z'}`)
+          .where(sql<boolean>`first_name between ${'Arnold'} and ${'Jennifer'}`)
+          .where(sql<boolean>`last_name between ${'A'} and ${'Z'}`)
 
         testSql(query, dialect, {
           postgres: {
@@ -546,116 +879,54 @@ for (const dialect of DIALECTS) {
 
         await query.execute()
       })
-    })
 
-    describe('orWhere', () => {
-      it('two where clauses', async () => {
-        const query = ctx.db
-          .selectFrom('person')
-          .selectAll()
-          .where('first_name', '=', 'Arnold')
-          .orWhere('first_name', '=', 'Jennifer')
+      if (dialect !== 'sqlite') {
+        it('subquery inside `any` operator', async () => {
+          await ctx.db
+            .insertInto('pet')
+            .values((eb) => ({
+              name: 'Cat Stevens',
+              species: 'cat',
+              owner_id: eb
+                .selectFrom('person')
+                .select('id')
+                .where('first_name', '=', 'Jennifer'),
+            }))
+            .execute()
 
-        testSql(query, dialect, {
-          postgres: {
-            sql: 'select * from "person" where "first_name" = $1 or "first_name" = $2',
-            parameters: ['Arnold', 'Jennifer'],
-          },
-          mysql: {
-            sql: 'select * from `person` where `first_name` = ? or `first_name` = ?',
-            parameters: ['Arnold', 'Jennifer'],
-          },
-          sqlite: {
-            sql: 'select * from "person" where "first_name" = ? or "first_name" = ?',
-            parameters: ['Arnold', 'Jennifer'],
-          },
+          const query = ctx.db
+            .selectFrom('person')
+            .select('first_name')
+            .where((eb) =>
+              eb(
+                eb.val('Cat Stevens'),
+                '=',
+                eb.fn.any(
+                  eb
+                    .selectFrom('pet')
+                    .whereRef('pet.owner_id', '=', 'person.id')
+                    .select('name')
+                )
+              )
+            )
+
+          testSql(query, dialect, {
+            postgres: {
+              sql: 'select "first_name" from "person" where $1 = any((select "name" from "pet" where "pet"."owner_id" = "person"."id"))',
+              parameters: ['Cat Stevens'],
+            },
+            mysql: {
+              sql: 'select `first_name` from `person` where ? = any((select `name` from `pet` where `pet`.`owner_id` = `person`.`id`))',
+              parameters: ['Cat Stevens'],
+            },
+            sqlite: NOT_SUPPORTED,
+          })
+
+          const result = await query.execute()
+          expect(result).to.have.length(1)
+          expect(result[0]).to.eql({ first_name: 'Jennifer' })
         })
-
-        const persons = await query.execute()
-        expect(persons).to.have.length(2)
-        expect(persons).to.containSubset([
-          {
-            first_name: 'Arnold',
-            last_name: 'Schwarzenegger',
-            gender: 'male',
-          },
-          {
-            first_name: 'Jennifer',
-            last_name: 'Aniston',
-            gender: 'female',
-          },
-        ])
-      })
-
-      it('two where clause groups', async () => {
-        const query = ctx.db
-          .selectFrom('person')
-          .selectAll()
-          .where('first_name', '=', 'Arnold')
-          .orWhere((qb) =>
-            qb
-              .where('first_name', '=', 'Jennifer')
-              .where('last_name', '=', 'Aniston')
-          )
-
-        testSql(query, dialect, {
-          postgres: {
-            sql: 'select * from "person" where "first_name" = $1 or ("first_name" = $2 and "last_name" = $3)',
-            parameters: ['Arnold', 'Jennifer', 'Aniston'],
-          },
-          mysql: {
-            sql: 'select * from `person` where `first_name` = ? or (`first_name` = ? and `last_name` = ?)',
-            parameters: ['Arnold', 'Jennifer', 'Aniston'],
-          },
-          sqlite: {
-            sql: 'select * from "person" where "first_name" = ? or ("first_name" = ? and "last_name" = ?)',
-            parameters: ['Arnold', 'Jennifer', 'Aniston'],
-          },
-        })
-
-        const persons = await query.execute()
-        expect(persons).to.have.length(2)
-        expect(persons).to.containSubset([
-          {
-            first_name: 'Arnold',
-            last_name: 'Schwarzenegger',
-            gender: 'male',
-          },
-          {
-            first_name: 'Jennifer',
-            last_name: 'Aniston',
-            gender: 'female',
-          },
-        ])
-      })
-
-      it('single raw instance', async () => {
-        const query = ctx.db
-          .selectFrom('person')
-          .selectAll()
-          .where((qb) =>
-            qb
-              .where(sql`first_name between ${'Arnold'} and ${'Jennifer'}`)
-              .orWhere(sql`last_name between ${'A'} and ${'Z'}`)
-          )
-
-        testSql(query, dialect, {
-          postgres: {
-            sql: 'select * from "person" where (first_name between $1 and $2 or last_name between $3 and $4)',
-            parameters: ['Arnold', 'Jennifer', 'A', 'Z'],
-          },
-          mysql: {
-            sql: 'select * from `person` where (first_name between ? and ? or last_name between ? and ?)',
-            parameters: ['Arnold', 'Jennifer', 'A', 'Z'],
-          },
-          sqlite: {
-            sql: 'select * from "person" where (first_name between ? and ? or last_name between ? and ?)',
-            parameters: ['Arnold', 'Jennifer', 'A', 'Z'],
-          },
-        })
-
-        await query.execute()
-      })
+      }
     })
 
     describe('whereRef', () => {
@@ -679,252 +950,6 @@ for (const dialect of DIALECTS) {
             parameters: [],
           },
         })
-      })
-    })
-
-    describe('orWhereRef', () => {
-      it('should compare two columns', async () => {
-        const query = ctx.db
-          .selectFrom(['person', 'pet'])
-          .selectAll()
-          .where((qb) =>
-            qb
-              .whereRef('person.id', '=', 'pet.id')
-              .orWhereRef('person.first_name', '=', 'pet.name')
-          )
-
-        testSql(query, dialect, {
-          postgres: {
-            sql: 'select * from "person", "pet" where ("person"."id" = "pet"."id" or "person"."first_name" = "pet"."name")',
-            parameters: [],
-          },
-          mysql: {
-            sql: 'select * from `person`, `pet` where (`person`.`id` = `pet`.`id` or `person`.`first_name` = `pet`.`name`)',
-            parameters: [],
-          },
-          sqlite: {
-            sql: 'select * from "person", "pet" where ("person"."id" = "pet"."id" or "person"."first_name" = "pet"."name")',
-            parameters: [],
-          },
-        })
-      })
-    })
-
-    describe('whereExists', () => {
-      it('should accept a subquery', async () => {
-        const query = ctx.db
-          .selectFrom('person')
-          .selectAll()
-          .whereExists((qb) =>
-            qb
-              .selectFrom('pet')
-              .select('pet.id')
-              .whereRef('pet.owner_id', '=', 'person.id')
-              .where('pet.species', '=', 'dog')
-          )
-
-        testSql(query, dialect, {
-          postgres: {
-            sql: `select * from "person" where exists (select "pet"."id" from "pet" where "pet"."owner_id" = "person"."id" and "pet"."species" = $1)`,
-            parameters: ['dog'],
-          },
-          mysql: {
-            sql: 'select * from `person` where exists (select `pet`.`id` from `pet` where `pet`.`owner_id` = `person`.`id` and `pet`.`species` = ?)',
-            parameters: ['dog'],
-          },
-          sqlite: {
-            sql: `select * from "person" where exists (select "pet"."id" from "pet" where "pet"."owner_id" = "person"."id" and "pet"."species" = ?)`,
-            parameters: ['dog'],
-          },
-        })
-
-        const persons = await query.execute()
-        expect(persons).to.have.length(1)
-        expect(persons).to.containSubset([
-          {
-            first_name: 'Arnold',
-            last_name: 'Schwarzenegger',
-            gender: 'male',
-          },
-        ])
-      })
-
-      it('should accept a raw instance', async () => {
-        const query = ctx.db
-          .selectFrom('person')
-          .selectAll()
-          .whereExists(
-            sql`(select ${sql.ref('pet.id')} from ${sql.ref(
-              'pet'
-            )} where ${sql.ref('pet.owner_id')} = ${sql.ref(
-              'person.id'
-            )} and ${sql.ref('pet.species')} = ${'cat'})`
-          )
-
-        testSql(query, dialect, {
-          postgres: {
-            sql: `select * from "person" where exists (select "pet"."id" from "pet" where "pet"."owner_id" = "person"."id" and "pet"."species" = $1)`,
-            parameters: ['cat'],
-          },
-          mysql: {
-            sql: 'select * from `person` where exists (select `pet`.`id` from `pet` where `pet`.`owner_id` = `person`.`id` and `pet`.`species` = ?)',
-            parameters: ['cat'],
-          },
-          sqlite: {
-            sql: `select * from "person" where exists (select "pet"."id" from "pet" where "pet"."owner_id" = "person"."id" and "pet"."species" = ?)`,
-            parameters: ['cat'],
-          },
-        })
-
-        const persons = await query.execute()
-        expect(persons).to.have.length(1)
-        expect(persons).to.containSubset([
-          {
-            first_name: 'Jennifer',
-            last_name: 'Aniston',
-            gender: 'female',
-          },
-        ])
-      })
-    })
-
-    describe('orWhereExists', () => {
-      it('should accept a subquery', async () => {
-        const query = ctx.db
-          .selectFrom('person')
-          .selectAll()
-          .where((qb) =>
-            qb
-              .where('first_name', '=', 'Jennifer')
-              .orWhereExists((qb) =>
-                qb
-                  .selectFrom('pet')
-                  .select('pet.id')
-                  .whereRef('pet.owner_id', '=', 'person.id')
-                  .where('pet.species', '=', 'hamster')
-              )
-          )
-
-        testSql(query, dialect, {
-          postgres: {
-            sql: `select * from "person" where ("first_name" = $1 or exists (select "pet"."id" from "pet" where "pet"."owner_id" = "person"."id" and "pet"."species" = $2))`,
-            parameters: ['Jennifer', 'hamster'],
-          },
-          mysql: {
-            sql: 'select * from `person` where (`first_name` = ? or exists (select `pet`.`id` from `pet` where `pet`.`owner_id` = `person`.`id` and `pet`.`species` = ?))',
-            parameters: ['Jennifer', 'hamster'],
-          },
-          sqlite: {
-            sql: `select * from "person" where ("first_name" = ? or exists (select "pet"."id" from "pet" where "pet"."owner_id" = "person"."id" and "pet"."species" = ?))`,
-            parameters: ['Jennifer', 'hamster'],
-          },
-        })
-
-        const persons = await query.execute()
-        expect(persons).to.have.length(2)
-        expect(persons).to.containSubset([
-          {
-            first_name: 'Sylvester',
-            last_name: 'Stallone',
-            gender: 'male',
-          },
-          {
-            first_name: 'Jennifer',
-            last_name: 'Aniston',
-            gender: 'female',
-          },
-        ])
-      })
-    })
-
-    describe('whereNotExists', () => {
-      it('should accept a subquery', async () => {
-        const query = ctx.db
-          .selectFrom('person')
-          .selectAll()
-          .whereNotExists((qb) =>
-            qb
-              .selectFrom('pet')
-              .select('pet.id')
-              .whereRef('pet.owner_id', '=', 'person.id')
-              .where('pet.species', '=', 'dog')
-          )
-
-        testSql(query, dialect, {
-          postgres: {
-            sql: `select * from "person" where not exists (select "pet"."id" from "pet" where "pet"."owner_id" = "person"."id" and "pet"."species" = $1)`,
-            parameters: ['dog'],
-          },
-          mysql: {
-            sql: 'select * from `person` where not exists (select `pet`.`id` from `pet` where `pet`.`owner_id` = `person`.`id` and `pet`.`species` = ?)',
-            parameters: ['dog'],
-          },
-          sqlite: {
-            sql: `select * from "person" where not exists (select "pet"."id" from "pet" where "pet"."owner_id" = "person"."id" and "pet"."species" = ?)`,
-            parameters: ['dog'],
-          },
-        })
-
-        const persons = await query.execute()
-        expect(persons).to.have.length(2)
-        expect(persons).to.containSubset([
-          {
-            first_name: 'Sylvester',
-            last_name: 'Stallone',
-            gender: 'male',
-          },
-          {
-            first_name: 'Jennifer',
-            last_name: 'Aniston',
-            gender: 'female',
-          },
-        ])
-      })
-    })
-
-    describe('orWhereNotExists', () => {
-      it('should accept a subquery', async () => {
-        const query = ctx.db
-          .selectFrom('person')
-          .selectAll()
-          .where('first_name', 'is', null)
-          .orWhereNotExists((qb) =>
-            qb
-              .selectFrom('pet')
-              .select('pet.id')
-              .whereRef('pet.owner_id', '=', 'person.id')
-              .where('pet.species', '=', 'hamster')
-          )
-
-        testSql(query, dialect, {
-          postgres: {
-            sql: `select * from "person" where "first_name" is null or not exists (select "pet"."id" from "pet" where "pet"."owner_id" = "person"."id" and "pet"."species" = $1)`,
-            parameters: ['hamster'],
-          },
-          mysql: {
-            sql: 'select * from `person` where `first_name` is null or not exists (select `pet`.`id` from `pet` where `pet`.`owner_id` = `person`.`id` and `pet`.`species` = ?)',
-            parameters: ['hamster'],
-          },
-          sqlite: {
-            sql: `select * from "person" where "first_name" is null or not exists (select "pet"."id" from "pet" where "pet"."owner_id" = "person"."id" and "pet"."species" = ?)`,
-            parameters: ['hamster'],
-          },
-        })
-
-        const persons = await query.execute()
-        expect(persons).to.have.length(2)
-        expect(persons).to.containSubset([
-          {
-            first_name: 'Arnold',
-            last_name: 'Schwarzenegger',
-            gender: 'male',
-          },
-          {
-            first_name: 'Jennifer',
-            last_name: 'Aniston',
-            gender: 'female',
-          },
-        ])
       })
     })
   })

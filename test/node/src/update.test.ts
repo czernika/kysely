@@ -58,6 +58,11 @@ for (const dialect of DIALECTS) {
 
       expect(result).to.be.instanceOf(UpdateResult)
       expect(result.numUpdatedRows).to.equal(1n)
+      if (dialect === 'mysql') {
+        expect(result.numChangedRows).to.equal(1n)
+      } else {
+        expect(result.numChangedRows).to.undefined
+      }
 
       expect(
         await ctx.db
@@ -98,6 +103,11 @@ for (const dialect of DIALECTS) {
 
       expect(result).to.be.instanceOf(UpdateResult)
       expect(result.numUpdatedRows).to.equal(1n)
+      if (dialect === 'mysql') {
+        expect(result.numChangedRows).to.equal(1n)
+      } else {
+        expect(result.numChangedRows).to.undefined
+      }
 
       expect(
         await ctx.db
@@ -143,6 +153,11 @@ for (const dialect of DIALECTS) {
 
       expect(result).to.be.instanceOf(UpdateResult)
       expect(result.numUpdatedRows).to.equal(1n)
+      if (dialect === 'mysql') {
+        expect(result.numChangedRows).to.equal(1n)
+      } else {
+        expect(result.numChangedRows).to.undefined
+      }
 
       const person = await ctx.db
         .selectFrom('person')
@@ -158,7 +173,7 @@ for (const dialect of DIALECTS) {
         const query = ctx.db
           .updateTable('person')
           .set((eb) => ({
-            first_name: eb.bxp('first_name', `||`, '2'),
+            first_name: eb('first_name', '||', '2'),
           }))
           .where('first_name', '=', 'Jennifer')
 
@@ -175,6 +190,7 @@ for (const dialect of DIALECTS) {
 
         expect(result).to.be.instanceOf(UpdateResult)
         expect(result.numUpdatedRows).to.equal(1n)
+        expect(result.numChangedRows).to.undefined
 
         const jennifer = await ctx.db
           .selectFrom('person')
@@ -213,6 +229,11 @@ for (const dialect of DIALECTS) {
 
       expect(result).to.be.instanceOf(UpdateResult)
       expect(result.numUpdatedRows).to.equal(1n)
+      if (dialect === 'mysql') {
+        expect(result.numChangedRows).to.equal(1n)
+      } else {
+        expect(result.numChangedRows).to.undefined
+      }
 
       const jennifer = await ctx.db
         .selectFrom('person')
@@ -248,6 +269,11 @@ for (const dialect of DIALECTS) {
 
       expect(result).to.be.instanceOf(UpdateResult)
       expect(result.numUpdatedRows).to.equal(1n)
+      if (dialect === 'mysql') {
+        expect(result.numChangedRows).to.equal(1n)
+      } else {
+        expect(result.numChangedRows).to.undefined
+      }
 
       const female = await ctx.db
         .selectFrom('person')
@@ -359,6 +385,80 @@ for (const dialect of DIALECTS) {
             gender,
           }))
         )
+      })
+    }
+
+    if (dialect === 'mysql') {
+      it('should update but not change the row', async () => {
+        const query = ctx.db
+          .updateTable('person')
+          .set({
+            first_name: 'Jennifer',
+          })
+          .where('first_name', '=', 'Jennifer')
+
+        await query.execute()
+        const result = await query.executeTakeFirst()
+        expect(result).instanceOf(UpdateResult)
+        expect(result.numUpdatedRows).to.equal(1n)
+        expect(result.numChangedRows).to.equal(0n)
+      })
+    }
+
+    it('should create an update query that uses a CTE', async () => {
+      const query = ctx.db
+        .with('jennifer_id', (qb) =>
+          qb
+            .selectFrom('person')
+            .where('first_name', '=', 'Jennifer')
+            .limit(1)
+            .select('id')
+        )
+        .updateTable('pet')
+        .set((eb) => ({
+          owner_id: eb.selectFrom('jennifer_id').select('id'),
+        }))
+
+      await query.execute()
+
+      const jennifer = await ctx.db
+        .selectFrom('person')
+        .where('first_name', '=', 'Jennifer')
+        .select('id')
+        .executeTakeFirstOrThrow()
+
+      const pets = await ctx.db.selectFrom('pet').select('owner_id').execute()
+      expect(pets).to.have.length(3)
+
+      // All pets should now belong to jennifer.
+      for (const pet of pets) {
+        expect(pet.owner_id).to.equal(jennifer.id)
+      }
+    })
+
+    if (dialect === 'postgres') {
+      it('should update using a from clause and a join', async () => {
+        const query = ctx.db
+          .updateTable('pet as p')
+          .from('pet')
+          .whereRef('p.id', '=', 'pet.id')
+          .innerJoin('person', 'person.id', 'pet.owner_id')
+          .set((eb) => ({
+            name: eb.fn.coalesce('person.first_name', eb.val('')),
+          }))
+
+        await query.execute()
+
+        const pets = await ctx.db
+          .selectFrom('pet')
+          .innerJoin('person', 'person.id', 'pet.owner_id')
+          .select(['pet.name as pet_name', 'person.first_name as person_name'])
+          .execute()
+
+        expect(pets).to.have.length(3)
+        for (const pet of pets) {
+          expect(pet.person_name).to.equal(pet.pet_name)
+        }
       })
     }
   })

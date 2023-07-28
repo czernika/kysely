@@ -1,5 +1,4 @@
 import { AddColumnNode } from '../operation-node/add-column-node.js'
-import { AlterColumnNode } from '../operation-node/alter-column-node.js'
 import { AlterTableNode } from '../operation-node/alter-table-node.js'
 import { ColumnDefinitionNode } from '../operation-node/column-definition-node.js'
 import { DropColumnNode } from '../operation-node/drop-column-node.js'
@@ -70,9 +69,7 @@ export class AlterTableBuilder implements ColumnAlteringInterface {
     column: string,
     alteration: AlterColumnBuilderCallback
   ): AlterTableColumnAlteringBuilder {
-    const builder = alteration(
-      new AlterColumnBuilder(column)
-    )
+    const builder = alteration(new AlterColumnBuilder(column))
 
     return new AlterTableColumnAlteringBuilder({
       ...this.#props,
@@ -232,13 +229,6 @@ export class AlterTableBuilder implements ColumnAlteringInterface {
   $call<T>(func: (qb: this) => T): T {
     return func(this)
   }
-
-  /**
-   * @deprecated Use `$call` instead
-   */
-  call<T>(func: (qb: this) => T): T {
-    return this.$call(func)
-  }
 }
 
 export interface AlterTableBuilderProps {
@@ -291,9 +281,7 @@ export class AlterTableColumnAlteringBuilder
     column: string,
     alteration: AlterColumnBuilderCallback
   ): AlterTableColumnAlteringBuilder {
-    const builder = alteration(
-      new AlterColumnBuilder(column)
-    )
+    const builder = alteration(new AlterColumnBuilder(column))
 
     return new AlterTableColumnAlteringBuilder({
       ...this.#props,

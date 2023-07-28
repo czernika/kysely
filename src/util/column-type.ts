@@ -66,6 +66,16 @@ export type Generated<S> = ColumnType<S, S | undefined, S>
 export type GeneratedAlways<S> = ColumnType<S, never, never>
 
 /**
+ * A shortcut for defining JSON columns, which are by default inserted/updated
+ * as stringified JSON strings.
+ */
+export type JSONColumnType<
+  SelectType extends object | null,
+  InsertType = string,
+  UpdateType = string
+> = ColumnType<SelectType, InsertType, UpdateType>
+
+/**
  * Evaluates to `K` if `T` can be `null` or `undefined`.
  */
 type IfNullable<T, K> = undefined extends T ? K : null extends T ? K : never
@@ -139,9 +149,11 @@ export type UpdateKeys<R> = {
  * // }
  * ```
  */
-export type Selectable<R> = {
-  [K in NonNeverSelectKeys<R>]: SelectType<R[K]>
-}
+export type Selectable<R> = [R] extends [unknown]
+  ? {
+      [K in NonNeverSelectKeys<R>]: SelectType<R[K]>
+    }
+  : never
 
 /**
  * Given a table interface, extracts the insert type from all
@@ -164,11 +176,13 @@ export type Selectable<R> = {
  * // }
  * ```
  */
-export type Insertable<R> = {
-  [K in NonNullableInsertKeys<R>]: InsertType<R[K]>
-} & {
-  [K in NullableInsertKeys<R>]?: InsertType<R[K]>
-}
+export type Insertable<R> = [R] extends [unknown]
+  ? {
+      [K in NonNullableInsertKeys<R>]: InsertType<R[K]>
+    } & {
+      [K in NullableInsertKeys<R>]?: InsertType<R[K]>
+    }
+  : never
 
 /**
  * Given a table interface, extracts the update type from all
@@ -190,6 +204,8 @@ export type Insertable<R> = {
  * // }
  * ```
  */
-export type Updateable<R> = {
-  [K in UpdateKeys<R>]?: UpdateType<R[K]>
-}
+export type Updateable<R> = [R] extends [unknown]
+  ? {
+      [K in UpdateKeys<R>]?: UpdateType<R[K]>
+    }
+  : never

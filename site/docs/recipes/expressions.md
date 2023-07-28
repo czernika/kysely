@@ -6,7 +6,7 @@ An [`Expression<T>`](https://kysely-org.github.io/kysely/interfaces/Expression.h
 
 ## Expression builder
 
-Expressions are usually built using an instance of [ExpressionBuilder<DB, TB>](https://kysely-org.github.io/kysely/classes/ExpressionBuilder.html). `DB` is the same database type you give to `Kysely` when you create an instance. `TB` is the union of all table names that are visible in the context. For example `ExpressionBuilder<DB, 'person' | 'pet'>` means you can access `person` and `pet` tables and all their columns in the expression.
+Expressions are usually built using an instance of [ExpressionBuilder<DB, TB>](https://kysely-org.github.io/kysely/interfaces/ExpressionBuilder.html). `DB` is the same database type you give to `Kysely` when you create an instance. `TB` is the union of all table names that are visible in the context. For example `ExpressionBuilder<DB, 'person' | 'pet'>` means you can access `person` and `pet` tables and all their columns in the expression.
 
 You can get an instance of the expression builder by using a callback:
 
@@ -27,14 +27,14 @@ const person = await db
       .limit(1)
       .as('pet_name'),
       
-    // Select a boolean expression. `cmpr` stands for `compare`.
-    eb.cmpr('first_name', '=', 'Jennifer').as('is_jennifer')
+    // Select a boolean expression..
+    eb('first_name', '=', 'Jennifer').as('is_jennifer')
   ])
   // You can also destructure the expression builder like this
-  .where(({ and, or, cmpr, not, exists, selectFrom }) => or([
+  .where(({ and, or, eb, not, exists, selectFrom }) => or([
     and([
-      cmpr('first_name', '=', firstName),
-      cmpr('last_name', '=', lastName)
+      eb('first_name', '=', firstName),
+      eb('last_name', '=', lastName)
     ]),
     not(exists(
       selectFrom('pet')
@@ -202,18 +202,18 @@ The same query can be built using the expression builder like this:
 const persons = await db
   .selectFrom('person')
   .selectAll('person')
-  .where(({ cmpr, and }) => {
+  .where((eb) => {
     const filters: Expression<boolean>[] = []
 
     if (firstName) {
-      filters.push(cmpr('first_name', '=', firstName))
+      filters.push(eb('first_name', '=', firstName))
     }
 
     if (lastName) {
-      filters.push(cmpr('last_name', '=', lastName))
+      filters.push(eb('last_name', '=', lastName))
     }
     
-    return and(filters)
+    return eb.and(filters)
   })
 ```
 

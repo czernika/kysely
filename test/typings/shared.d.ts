@@ -1,4 +1,9 @@
-import { Generated, GeneratedAlways, ColumnType } from '../../dist/cjs'
+import {
+  ColumnType,
+  Generated,
+  GeneratedAlways,
+  JSONColumnType,
+} from '../../dist/cjs'
 
 export interface Pet {
   id: Generated<string>
@@ -30,7 +35,23 @@ export interface Database {
   'some_schema.movie': Movie
   book: Book
   toy: Toy
+  person_metadata: PersonMetadata
+  action: Action
 }
+
+export type Action =
+  | {
+      id: GeneratedAlways<string>
+      type: 'CALL_WEBHOOK'
+      queue_id: null
+      callback_url: string
+    }
+  | {
+      id: GeneratedAlways<string>
+      type: 'DELETE_FROM_QUEUE'
+      queue_id: string
+      callback_url: null
+    }
 
 export interface Person {
   id: Generated<number>
@@ -43,4 +64,26 @@ export interface Person {
   // we never want the user to be able to insert or
   // update.
   modified_at: ColumnType<Date, never, never>
+}
+
+export interface PersonMetadata {
+  id: Generated<number>
+  person_id: number
+  website: JSONColumnType<{ url: string }>
+  nicknames: JSONColumnType<string[]>
+  profile: JSONColumnType<{
+    auth: {
+      roles: string[]
+      last_login?: { device: string }
+    }
+    tags: string[]
+  }>
+  experience: JSONColumnType<
+    {
+      establishment: string
+    }[]
+  >
+  schedule: JSONColumnType<{ name: string; time: string }[][][]>
+  record: JSONColumnType<Record<string, string>>
+  array: JSONColumnType<Array<string>>
 }

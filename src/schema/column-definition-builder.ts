@@ -1,6 +1,5 @@
 import { CheckConstraintNode } from '../operation-node/check-constraint-node.js'
 import { OperationNodeSource } from '../operation-node/operation-node-source.js'
-import { ReferenceNode } from '../operation-node/reference-node.js'
 import {
   OnModifyForeignAction,
   ReferencesNode,
@@ -66,7 +65,7 @@ export class ColumnDefinitionBuilder implements OperationNodeSource {
   references(ref: string): ColumnDefinitionBuilder {
     const references = parseStringReference(ref)
 
-    if (!ReferenceNode.is(references) || SelectAllNode.is(references.column)) {
+    if (!references.table || SelectAllNode.is(references.column)) {
       throw new Error(
         `invalid call references('${ref}'). The reference must have format table.column or schema.table.column`
       )

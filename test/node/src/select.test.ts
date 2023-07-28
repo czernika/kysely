@@ -289,16 +289,16 @@ for (const dialect of DIALECTS) {
 
       testSql(query, dialect, {
         postgres: {
-          sql: 'select count(case when "first_name" = $1 then $2 end) as "num_jennifers" from "person"',
-          parameters: ['Jennifer', 1],
+          sql: 'select count(case when "first_name" = $1 then 1 end) as "num_jennifers" from "person"',
+          parameters: ['Jennifer'],
         },
         mysql: {
-          sql: 'select count(case when `first_name` = ? then ? end) as `num_jennifers` from `person`',
-          parameters: ['Jennifer', 1],
+          sql: 'select count(case when `first_name` = ? then 1 end) as `num_jennifers` from `person`',
+          parameters: ['Jennifer'],
         },
         sqlite: {
-          sql: 'select count(case when "first_name" = ? then ? end) as "num_jennifers" from "person"',
-          parameters: ['Jennifer', 1],
+          sql: 'select count(case when "first_name" = ? then 1 end) as "num_jennifers" from "person"',
+          parameters: ['Jennifer'],
         },
       })
 
@@ -562,6 +562,58 @@ for (const dialect of DIALECTS) {
           },
           mysql: {
             sql: 'select `last_name` from `person` where `first_name` = ? for update',
+            parameters: ['Jennifer'],
+          },
+          sqlite: NOT_SUPPORTED,
+        })
+
+        const persons = await query.execute()
+
+        expect(persons).to.have.length(1)
+        expect(persons).to.eql([{ last_name: 'Aniston' }])
+      })
+
+      it('should select a row for update with skip locked', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .select('last_name')
+          .where('first_name', '=', 'Jennifer')
+          .forUpdate()
+          .skipLocked()
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select "last_name" from "person" where "first_name" = $1 for update skip locked',
+            parameters: ['Jennifer'],
+          },
+          mysql: {
+            sql: 'select `last_name` from `person` where `first_name` = ? for update skip locked',
+            parameters: ['Jennifer'],
+          },
+          sqlite: NOT_SUPPORTED,
+        })
+
+        const persons = await query.execute()
+
+        expect(persons).to.have.length(1)
+        expect(persons).to.eql([{ last_name: 'Aniston' }])
+      })
+
+      it('should select a row for update with skipLocked called before forUpdate', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .select('last_name')
+          .where('first_name', '=', 'Jennifer')
+          .skipLocked()
+          .forUpdate()
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select "last_name" from "person" where "first_name" = $1 for update skip locked',
+            parameters: ['Jennifer'],
+          },
+          mysql: {
+            sql: 'select `last_name` from `person` where `first_name` = ? for update skip locked',
             parameters: ['Jennifer'],
           },
           sqlite: NOT_SUPPORTED,
@@ -848,38 +900,41 @@ for (const dialect of DIALECTS) {
       }
     }
 
-    it.skip('perf', async () => {
-      const ids = Array.from({ length: 100 }).map(() =>
-        Math.round(Math.random() * 1000)
-      )
+    it('should create a select statement without a `from` clause', async () => {
+      const query = ctx.db.selectNoFrom((eb) => [
+        eb.selectNoFrom(eb.lit(1).as('one')).as('one'),
+        eb
+          .selectFrom('person')
+          .select('first_name')
+          .orderBy('first_name')
+          .limit(1)
+          .as('person_first_name'),
+      ])
 
-      function test() {
-        return ctx.db
-          .updateTable('person')
-          .set({
-            first_name: 'foo',
-            last_name: 'bar',
-            id: 100,
-            gender: 'other',
-          })
-          .where('id', 'in', ids)
-          .compile()
+      testSql(query, dialect, {
+        postgres: {
+          sql: `select (select 1 as "one") as "one", (select "first_name" from "person" order by "first_name" limit $1) as "person_first_name"`,
+          parameters: [1],
+        },
+        mysql: {
+          sql: 'select (select 1 as `one`) as `one`, (select `first_name` from `person` order by `first_name` limit ?) as `person_first_name`',
+          parameters: [1],
+        },
+        sqlite: {
+          sql: 'select (select 1 as "one") as "one", (select "first_name" from "person" order by "first_name" limit ?) as "person_first_name"',
+          parameters: [1],
+        },
+      })
+
+      const result = await query.execute()
+      expect(result).to.have.length(1)
+
+      if (dialect === 'mysql') {
+        // For some weird reason, MySQL returns `one` as a string.
+        expect(result[0]).to.eql({ one: '1', person_first_name: 'Arnold' })
+      } else {
+        expect(result[0]).to.eql({ one: 1, person_first_name: 'Arnold' })
       }
-
-      // Warmup
-      for (let i = 0; i < 1000; ++i) {
-        test()
-      }
-
-      const time = Date.now()
-      const N = 100000
-
-      for (let i = 0; i < N; ++i) {
-        test()
-      }
-
-      const endTime = Date.now()
-      console.log((endTime - time) / N)
     })
   })
 }

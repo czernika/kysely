@@ -1,5 +1,6 @@
 import { DynamicReferenceBuilder } from '../dynamic/dynamic-reference-builder.js'
 import { ExpressionWrapper } from '../expression/expression-wrapper.js'
+import { Expression } from '../expression/expression.js'
 import { AggregateFunctionNode } from '../operation-node/aggregate-function-node.js'
 import { FunctionNode } from '../operation-node/function-node.js'
 import { CoalesceReferenceExpressionList } from '../parser/coalesce-parser.js'
@@ -9,10 +10,13 @@ import {
   ReferenceExpression,
   StringReference,
   parseReferenceExpressionOrList,
+  ExtractTypeFromStringReference,
 } from '../parser/reference-parser.js'
 import { parseSelectAll } from '../parser/select-parser.js'
+import { KyselyTypeError } from '../util/type-error.js'
 import { Equals, IsAny } from '../util/type-utils.js'
 import { AggregateFunctionBuilder } from './aggregate-function-builder.js'
+import { SelectQueryBuilder } from './select-query-builder.js'
 
 /**
  * Helpers for type safe SQL function calls.
@@ -91,7 +95,7 @@ export interface FunctionModule<DB, TB extends keyof DB> {
   <T>(
     name: string,
     args: ReadonlyArray<ReferenceExpression<DB, TB>>
-  ): ExpressionWrapper<T>
+  ): ExpressionWrapper<DB, TB, T>
 
   /**
    * Creates an aggregate function call.
@@ -127,7 +131,7 @@ export interface FunctionModule<DB, TB extends keyof DB> {
   ): AggregateFunctionBuilder<DB, TB, O>
 
   /**
-   * Calls the `avg` function for the column given as the argument.
+   * Calls the `avg` function for the column or expression given as the argument.
    *
    * This sql function calculates the average value for a given column.
    *
@@ -138,10 +142,8 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * ### Examples
    *
    * ```ts
-   * const { avg } = db.fn
-   *
    * db.selectFrom('toy')
-   *   .select(avg('price').as('avg_price'))
+   *   .select((eb) => eb.fn.avg('price').as('avg_price'))
    *   .execute()
    * ```
    *
@@ -170,10 +172,8 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * the first type argument:
    *
    * ```ts
-   * const { avg } = db.fn
-   *
    * db.selectFrom('toy')
-   *   .select(avg<number>('price').as('avg_price'))
+   *   .select((eb) => eb.fn.avg<number>('price').as('avg_price'))
    *   .execute()
    * ```
    *
@@ -183,10 +183,8 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * function.
    *
    * ```ts
-   * const { avg } = db.fn
-   *
    * db.selectFrom('toy')
-   *   .select(avg<number | null>('price').as('avg_price'))
+   *   .select((eb) => eb.fn.avg<number | null>('price').as('avg_price'))
    *   .execute()
    * ```
    */
@@ -218,10 +216,8 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * ### Examples
    *
    * ```ts
-   * const { coalesce } = db.fn
-   *
    * db.selectFrom('participant')
-   *   .select(coalesce('nickname', sql<string>`'<anonymous>'`).as('nickname'))
+   *   .select((eb) => eb.fn.coalesce('nickname', sql<string>`'<anonymous>'`).as('nickname'))
    *   .where('room_id', '=', roomId)
    *   .execute()
    * ```
@@ -247,10 +243,8 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * You can combine this function with other helpers in this module:
    *
    * ```ts
-   * const { avg, coalesce } = db.fn
-   *
    * db.selectFrom('person')
-   *   .select(coalesce(avg<number | null>('age'), sql<number>`0`).as('avg_age'))
+   *   .select((eb) => eb.fn.coalesce(eb.fn.avg<number | null>('age'), sql<number>`0`).as('avg_age'))
    *   .where('first_name', '=', 'Jennifer')
    *   .execute()
    * ```
@@ -267,10 +261,14 @@ export interface FunctionModule<DB, TB extends keyof DB> {
   >(
     value: V,
     ...otherValues: OV
-  ): ExpressionWrapper<CoalesceReferenceExpressionList<DB, TB, [V, ...OV]>>
+  ): ExpressionWrapper<
+    DB,
+    TB,
+    CoalesceReferenceExpressionList<DB, TB, [V, ...OV]>
+  >
 
   /**
-   * Calls the `count` function for the column given as the argument.
+   * Calls the `count` function for the column or expression given as the argument.
    *
    * When called with a column as argument, this sql function counts the number of rows where there
    * is a non-null value in that column.
@@ -284,10 +282,8 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * ### Examples
    *
    * ```ts
-   * const { count } = db.fn
-   *
    * db.selectFrom('toy')
-   *   .select(count('id').as('num_toys'))
+   *   .select((eb) => eb.fn.count('id').as('num_toys'))
    *   .execute()
    * ```
    *
@@ -308,10 +304,8 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * the type as the first type argument:
    *
    * ```ts
-   * const { count } = db.fn
-   *
    * db.selectFrom('toy')
-   *   .select(count<number>('id').as('num_toys'))
+   *   .select((eb) => eb.fn.count<number>('id').as('num_toys'))
    *   .execute()
    * ```
    *
@@ -346,10 +340,8 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * ### Examples
    *
    * ```ts
-   * const { countAll } = db.fn
-   *
    * db.selectFrom('toy')
-   *   .select(countAll().as('num_toys'))
+   *   .select((eb) => eb.fn.countAll().as('num_toys'))
    *   .execute()
    * ```
    *
@@ -370,10 +362,8 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * the type as the first type argument:
    *
    * ```ts
-   * const { countAll } = db.fn
-   *
    * db.selectFrom('toy')
-   *   .select(countAll<number>().as('num_toys'))
+   *   .select((eb) => eb.fn.countAll<number>().as('num_toys'))
    *   .execute()
    * ```
    *
@@ -381,11 +371,9 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * table:
    *
    * ```ts
-   * const { countAll } = db.fn
-   *
    * db.selectFrom('toy')
    *   .innerJoin('pet', 'pet.id', 'toy.pet_id')
-   *   .select(countAll('toy').as('num_toys'))
+   *   .select((eb) => eb.fn.countAll('toy').as('num_toys'))
    *   .execute()
    * ```
    *
@@ -416,7 +404,7 @@ export interface FunctionModule<DB, TB extends keyof DB> {
   >
 
   /**
-   * Calls the `max` function for the column given as the argument.
+   * Calls the `max` function for the column or expression given as the argument.
    *
    * This sql function calculates the maximum value for a given column.
    *
@@ -431,10 +419,8 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * ### Examples
    *
    * ```ts
-   * const { max } = db.fn
-   *
    * db.selectFrom('toy')
-   *   .select(max('price').as('max_price'))
+   *   .select((eb) => eb.fn.max('price').as('max_price'))
    *   .execute()
    * ```
    *
@@ -458,10 +444,8 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * function.
    *
    * ```ts
-   * const { max } = db.fn
-   *
    * db.selectFrom('toy')
-   *   .select(max<number | null, 'price'>('price').as('max_price'))
+   *   .select((eb) => eb.fn.max<number | null, 'price'>('price').as('max_price'))
    *   .execute()
    * ```
    */
@@ -477,7 +461,7 @@ export interface FunctionModule<DB, TB extends keyof DB> {
   ): AggregateFunctionBuilder<DB, TB, O>
 
   /**
-   * Calls the `min` function for the column given as the argument.
+   * Calls the `min` function for the column or expression given as the argument.
    *
    * This sql function calculates the minimum value for a given column.
    *
@@ -492,10 +476,8 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * ### Examples
    *
    * ```ts
-   * const { min } = db.fn
-   *
    * db.selectFrom('toy')
-   *   .select(min('price').as('min_price'))
+   *   .select((eb) => eb.fn.min('price').as('min_price'))
    *   .execute()
    * ```
    *
@@ -519,10 +501,8 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * function.
    *
    * ```ts
-   * const { min } = db.fn
-   *
    * db.selectFrom('toy')
-   *   .select(min<number | null, 'price'>('price').as('min_price'))
+   *   .select((eb) => eb.fn.min<number | null, 'price'>('price').as('min_price'))
    *   .execute()
    * ```
    */
@@ -538,7 +518,7 @@ export interface FunctionModule<DB, TB extends keyof DB> {
   ): AggregateFunctionBuilder<DB, TB, O>
 
   /**
-   * Calls the `sum` function for the column given as the argument.
+   * Calls the `sum` function for the column or expression given as the argument.
    *
    * This sql function sums the values of a given column.
    *
@@ -549,10 +529,8 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * ### Examples
    *
    * ```ts
-   * const { sum } = db.fn
-   *
    * db.selectFrom('toy')
-   *   .select(sum('price').as('total_price'))
+   *   .select((eb) => eb.fn.sum('price').as('total_price'))
    *   .execute()
    * ```
    *
@@ -581,10 +559,8 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * the first type argument:
    *
    * ```ts
-   * const { sum } = db.fn
-   *
    * db.selectFrom('toy')
-   *   .select(sum<number>('price').as('total_price'))
+   *   .select((eb) => eb.fn.sum<number>('price').as('total_price'))
    *   .execute()
    * ```
    *
@@ -594,10 +570,8 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * function.
    *
    * ```ts
-   * const { sum } = db.fn
-   *
    * db.selectFrom('toy')
-   *   .select(sum<number | null>('price').as('total_price'))
+   *   .select((eb) => eb.fn.sum<number | null>('price').as('total_price'))
    *   .execute()
    * ```
    */
@@ -607,6 +581,50 @@ export interface FunctionModule<DB, TB extends keyof DB> {
   >(
     column: C
   ): AggregateFunctionBuilder<DB, TB, O>
+
+  /**
+   * Calls the `any` function for the column or expression given as the argument.
+   *
+   * The argument must be a subquery or evaluate to an array.
+   *
+   * ### Examples
+   *
+   * In the following example, `nicknames` is assumed to be a column of type `string[]`:
+   *
+   * ```ts
+   * db.selectFrom('person')
+   *   .selectAll('person')
+   *   .where((eb) => eb(
+   *     eb.val('Jen'), '=', eb.fn.any('person.nicknames')
+   *   ))
+   * ```
+   *
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * select
+   *   "person".*
+   * from
+   *   "person"
+   * where
+   *  $1 = any("person"."nicknames")
+   * ```
+   */
+  any<RE extends StringReference<DB, TB>>(
+    expr: RE
+  ): Exclude<
+    ExtractTypeFromStringReference<DB, TB, RE>,
+    null
+  > extends ReadonlyArray<infer I>
+    ? ExpressionWrapper<DB, TB, I>
+    : KyselyTypeError<'any(expr) call failed: expr must be an array'>
+
+  any<T>(
+    subquery: SelectQueryBuilder<any, any, Record<string, T>>
+  ): ExpressionWrapper<DB, TB, T>
+
+  any<T>(expr: Expression<ReadonlyArray<T>>): ExpressionWrapper<DB, TB, T>
 }
 
 export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
@@ -616,7 +634,7 @@ export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
   const fn = <T>(
     name: string,
     args: ReadonlyArray<ReferenceExpression<DB, TB>>
-  ): ExpressionWrapper<T> => {
+  ): ExpressionWrapper<DB, TB, T> => {
     return new ExpressionWrapper(
       FunctionNode.create(name, parseReferenceExpressionOrList(args))
     )
@@ -650,7 +668,11 @@ export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
     >(
       value: V,
       ...otherValues: OV
-    ): ExpressionWrapper<CoalesceReferenceExpressionList<DB, TB, [V, ...OV]>> {
+    ): ExpressionWrapper<
+      DB,
+      TB,
+      CoalesceReferenceExpressionList<DB, TB, [V, ...OV]>
+    > {
       return fn('coalesce', [value, ...otherValues])
     },
 
@@ -693,6 +715,10 @@ export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
       C extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>
     >(column: C): AggregateFunctionBuilder<DB, TB, O> {
       return agg('sum', [column])
+    },
+
+    any<RE extends ReferenceExpression<DB, TB>>(column: RE): any {
+      return fn('any', [column])
     },
   })
 }

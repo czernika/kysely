@@ -13,8 +13,9 @@ import { Simplify } from '../util/type-utils.js'
  * A MySQL helper for aggregating a subquery into a JSON array.
  *
  * NOTE: This helper is only guaranteed to fully work with the built-in `MysqlDialect`.
- * While the produced SQL is compatibe with all MySQL databases, some 3rd party dialects
- * may not parse the nested results into arrays.
+ * While the produced SQL is compatible with all MySQL databases, some 3rd party dialects
+ * may not parse the nested JSON into arrays. In these cases you can use the built in
+ * `ParseJSONResultsPlugin` to parse the results.
  *
  * ### Examples
  *
@@ -26,7 +27,7 @@ import { Simplify } from '../util/type-utils.js'
  *     jsonArrayFrom(
  *       eb.selectFrom('pet')
  *         .select(['pet.id as pet_id', 'pet.name'])
- *         .where('pet.owner_id', '=', 'person.id')
+ *         .whereRef('pet.owner_id', '=', 'person.id')
  *         .orderBy('pet.name')
  *     ).as('pets')
  *   ])
@@ -68,8 +69,9 @@ export function jsonArrayFrom<O>(
  * The subquery must only return one row.
  *
  * NOTE: This helper is only guaranteed to fully work with the built-in `MysqlDialect`.
- * While the produced SQL is compatibe with all MySQL databases, some 3rd party dialects
- * may not parse the nested results into objects.
+ * While the produced SQL is compatible with all MySQL databases, some 3rd party dialects
+ * may not parse the nested JSON into objects. In these cases you can use the built in
+ * `ParseJSONResultsPlugin` to parse the results.
  *
  * ### Examples
  *
@@ -81,7 +83,7 @@ export function jsonArrayFrom<O>(
  *     jsonObjectFrom(
  *       eb.selectFrom('pet')
  *         .select(['pet.id as pet_id', 'pet.name'])
- *         .where('pet.owner_id', '=', 'person.id')
+ *         .whereRef('pet.owner_id', '=', 'person.id')
  *         .where('pet.is_favorite', '=', true)
  *     ).as('favorite_pet')
  *   ])
@@ -121,8 +123,9 @@ export function jsonObjectFrom<O>(
  * The MySQL `json_object` function.
  *
  * NOTE: This helper is only guaranteed to fully work with the built-in `MysqlDialect`.
- * While the produced SQL is compatibe with all MySQL databases, some 3rd party dialects
- * may not parse the nested results into objects.
+ * While the produced SQL is compatible with all MySQL databases, some 3rd party dialects
+ * may not parse the nested JSON into objects. In these cases you can use the built in
+ * `ParseJSONResultsPlugin` to parse the results.
  *
  * ### Examples
  *
