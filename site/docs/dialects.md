@@ -1,14 +1,14 @@
 # Dialects
 
-A dialect is the glue between Kysely and the underlying database engine. Check the [API docs](https://kysely-org.github.io/kysely/interfaces/Dialect.html) to learn how to build your own.
+A dialect is the glue between Kysely and the underlying database engine. Check the [API docs](https://kysely-org.github.io/kysely-apidoc/interfaces/Dialect.html) to learn how to build your own.
 
 ## Built-in dialects
 
 | Dialect | Link |
 | --- | --- |
-| MySQL | https://kysely-org.github.io/kysely/classes/MysqlDialect.html |
-| PostgreSQL | https://kysely-org.github.io/kysely/classes/PostgresDialect.html |
-| SQLite | https://kysely-org.github.io/kysely/classes/SqliteDialect.html |
+| MySQL | https://kysely-org.github.io/kysely-apidoc/classes/MysqlDialect.html |
+| PostgreSQL | https://kysely-org.github.io/kysely-apidoc/classes/PostgresDialect.html |
+| SQLite | https://kysely-org.github.io/kysely-apidoc/classes/SqliteDialect.html |
 
 ## 3rd party dialects
 
@@ -24,3 +24,5 @@ A dialect is the glue between Kysely and the underlying database engine. Check t
 | SingleStore Data API | https://github.com/igalklebanov/kysely-singlestore |
 | Postgres.js | https://github.com/igalklebanov/kysely-postgres-js |
 | Fetch driver | https://github.com/andersgee/kysely-fetch-driver |
+| SQLite WASM | https://github.com/DallasHoff/sqlocal |
+| Deno SQLite | https://gitlab.com/soapbox-pub/kysely-deno-sqlite |
