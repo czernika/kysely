@@ -104,6 +104,12 @@ import { JSONPathNode } from '../operation-node/json-path-node.js'
 import { JSONPathLegNode } from '../operation-node/json-path-leg-node.js'
 import { JSONOperatorChainNode } from '../operation-node/json-operator-chain-node.js'
 import { TupleNode } from '../operation-node/tuple-node.js'
+import { MergeQueryNode } from '../operation-node/merge-query-node.js'
+import { MatchedNode } from '../operation-node/matched-node.js'
+import { AddIndexNode } from '../operation-node/add-index-node.js'
+import { CastNode } from '../operation-node/cast-node.js'
+import { FetchNode } from '../operation-node/fetch-node.js'
+import { TopNode } from '../operation-node/top-node.js'
 
 export class DefaultQueryCompiler
   extends OperationNodeVisitor
@@ -138,6 +144,7 @@ export class DefaultQueryCompiler
       this.parentNode !== undefined &&
       !ParensNode.is(this.parentNode) &&
       !InsertQueryNode.is(this.parentNode) &&
+      !CreateTableNode.is(this.parentNode) &&
       !CreateViewNode.is(this.parentNode) &&
       !SetOperationNode.is(this.parentNode)
 
@@ -165,6 +172,11 @@ export class DefaultQueryCompiler
     if (node.frontModifiers?.length) {
       this.append(' ')
       this.compileList(node.frontModifiers, ' ')
+    }
+
+    if (node.top) {
+      this.append(' ')
+      this.visitNode(node.top)
     }
 
     if (node.selections) {
@@ -217,6 +229,11 @@ export class DefaultQueryCompiler
       this.visitNode(node.offset)
     }
 
+    if (node.fetch) {
+      this.append(' ')
+      this.visitNode(node.fetch)
+    }
+
     if (node.endModifiers?.length) {
       this.append(' ')
       this.compileList(this.sortSelectModifiers([...node.endModifiers]), ' ')
@@ -248,7 +265,7 @@ export class DefaultQueryCompiler
 
   protected compileList(
     nodes: ReadonlyArray<OperationNode>,
-    separator = ', '
+    separator = ', ',
   ): void {
     const lastIndex = nodes.length - 1
 
@@ -272,14 +289,15 @@ export class DefaultQueryCompiler
   }
 
   protected override visitInsertQuery(node: InsertQueryNode): void {
-    const isSubQuery = this.nodeStack.find(QueryNode.is) !== node
+    const rootQueryNode = this.nodeStack.find(QueryNode.is)!
+    const isSubQuery = rootQueryNode !== node
 
     if (!isSubQuery && node.explain) {
       this.visitNode(node.explain)
       this.append(' ')
     }
 
-    if (isSubQuery) {
+    if (isSubQuery && !MergeQueryNode.is(rootQueryNode)) {
       this.append('(')
     }
 
@@ -294,8 +312,15 @@ export class DefaultQueryCompiler
       this.append(' ignore')
     }
 
-    this.append(' into ')
-    this.visitNode(node.into)
+    if (node.top) {
+      this.append(' ')
+      this.visitNode(node.top)
+    }
+
+    if (node.into) {
+      this.append(' into ')
+      this.visitNode(node.into)
+    }
 
     if (node.columns) {
       this.append(' (')
@@ -306,6 +331,11 @@ export class DefaultQueryCompiler
     if (node.values) {
       this.append(' ')
       this.visitNode(node.values)
+    }
+
+    if (node.defaultValues) {
+      this.append(' ')
+      this.append('default values')
     }
 
     if (node.onConflict) {
@@ -323,7 +353,7 @@ export class DefaultQueryCompiler
       this.visitNode(node.returning)
     }
 
-    if (isSubQuery) {
+    if (isSubQuery && !MergeQueryNode.is(rootQueryNode)) {
       this.append(')')
     }
   }
@@ -351,6 +381,12 @@ export class DefaultQueryCompiler
     }
 
     this.append('delete ')
+
+    if (node.top) {
+      this.visitNode(node.top)
+      this.append(' ')
+    }
+
     this.visitNode(node.from)
 
     if (node.using) {
@@ -421,7 +457,7 @@ export class DefaultQueryCompiler
   protected compileUnwrappedIdentifier(node: IdentifierNode): void {
     if (!isString(node.name)) {
       throw new Error(
-        'a non-string identifier was passed to compileUnwrappedIdentifier.'
+        'a non-string identifier was passed to compileUnwrappedIdentifier.',
       )
     }
 
@@ -461,7 +497,7 @@ export class DefaultQueryCompiler
   }
 
   protected override visitPrimitiveValueList(
-    node: PrimitiveValueListNode
+    node: PrimitiveValueListNode,
   ): void {
     this.append('(')
 
@@ -520,7 +556,7 @@ export class DefaultQueryCompiler
   }
 
   protected override visitSchemableIdentifier(
-    node: SchemableIdentifierNode
+    node: SchemableIdentifierNode,
   ): void {
     if (node.schema) {
       this.visitNode(node.schema)
@@ -549,18 +585,24 @@ export class DefaultQueryCompiler
     }
 
     this.visitNode(node.table)
-    this.append(' (')
-    this.compileList([...node.columns, ...(node.constraints ?? [])])
-    this.append(')')
 
-    if (node.onCommit) {
-      this.append(' on commit ')
-      this.append(node.onCommit)
-    }
+    if (node.selectQuery) {
+      this.append(' as ')
+      this.visitNode(node.selectQuery)
+    } else {
+      this.append(' (')
+      this.compileList([...node.columns, ...(node.constraints ?? [])])
+      this.append(')')
 
-    if (node.endModifiers && node.endModifiers.length > 0) {
-      this.append(' ')
-      this.compileList(node.endModifiers, ' ')
+      if (node.onCommit) {
+        this.append(' on commit ')
+        this.append(node.onCommit)
+      }
+
+      if (node.endModifiers && node.endModifiers.length > 0) {
+        this.append(' ')
+        this.compileList(node.endModifiers, ' ')
+      }
     }
   }
 
@@ -584,6 +626,10 @@ export class DefaultQueryCompiler
       this.visitNode(node.generated)
     }
 
+    if (node.identity) {
+      this.append(' identity')
+    }
+
     if (node.defaultTo) {
       this.append(' ')
       this.visitNode(node.defaultTo)
@@ -595,6 +641,10 @@ export class DefaultQueryCompiler
 
     if (node.unique) {
       this.append(' unique')
+    }
+
+    if (node.nullsNotDistinct) {
+      this.append(' nulls not distinct')
     }
 
     if (node.primaryKey) {
@@ -686,14 +736,15 @@ export class DefaultQueryCompiler
   }
 
   protected override visitUpdateQuery(node: UpdateQueryNode): void {
-    const isSubQuery = this.nodeStack.find(QueryNode.is) !== node
+    const rootQueryNode = this.nodeStack.find(QueryNode.is)!
+    const isSubQuery = rootQueryNode !== node
 
     if (!isSubQuery && node.explain) {
       this.visitNode(node.explain)
       this.append(' ')
     }
 
-    if (isSubQuery) {
+    if (isSubQuery && !MergeQueryNode.is(rootQueryNode)) {
       this.append('(')
     }
 
@@ -703,8 +754,18 @@ export class DefaultQueryCompiler
     }
 
     this.append('update ')
-    this.visitNode(node.table)
-    this.append(' set ')
+
+    if (node.top) {
+      this.visitNode(node.top)
+      this.append(' ')
+    }
+
+    if (node.table) {
+      this.visitNode(node.table)
+      this.append(' ')
+    }
+
+    this.append('set ')
 
     if (node.updates) {
       this.compileList(node.updates)
@@ -725,12 +786,17 @@ export class DefaultQueryCompiler
       this.visitNode(node.where)
     }
 
+    if (node.limit) {
+      this.append(' ')
+      this.visitNode(node.limit)
+    }
+
     if (node.returning) {
       this.append(' ')
       this.visitNode(node.returning)
     }
 
-    if (isSubQuery) {
+    if (isSubQuery && !MergeQueryNode.is(rootQueryNode)) {
       this.append(')')
     }
   }
@@ -821,6 +887,10 @@ export class DefaultQueryCompiler
       this.append(')')
     }
 
+    if (node.nullsNotDistinct) {
+      this.append(' nulls not distinct')
+    }
+
     if (node.where) {
       this.append(' ')
       this.visitNode(node.where)
@@ -871,7 +941,7 @@ export class DefaultQueryCompiler
   }
 
   protected override visitPrimaryKeyConstraint(
-    node: PrimaryKeyConstraintNode
+    node: PrimaryKeyConstraintNode,
   ): void {
     if (node.name) {
       this.append('constraint ')
@@ -891,7 +961,13 @@ export class DefaultQueryCompiler
       this.append(' ')
     }
 
-    this.append('unique (')
+    this.append('unique')
+
+    if (node.nullsNotDistinct) {
+      this.append(' nulls not distinct')
+    }
+
+    this.append(' (')
     this.compileList(node.columns)
     this.append(')')
   }
@@ -909,7 +985,7 @@ export class DefaultQueryCompiler
   }
 
   protected override visitForeignKeyConstraint(
-    node: ForeignKeyConstraintNode
+    node: ForeignKeyConstraintNode,
   ): void {
     if (node.name) {
       this.append('constraint ')
@@ -948,7 +1024,7 @@ export class DefaultQueryCompiler
   }
 
   protected override visitCommonTableExpression(
-    node: CommonTableExpressionNode
+    node: CommonTableExpressionNode,
   ): void {
     this.visitNode(node.name)
     this.append(' as ')
@@ -965,7 +1041,7 @@ export class DefaultQueryCompiler
   }
 
   protected override visitCommonTableExpressionName(
-    node: CommonTableExpressionNameNode
+    node: CommonTableExpressionNameNode,
   ): void {
     this.visitNode(node.table)
 
@@ -1001,6 +1077,14 @@ export class DefaultQueryCompiler
 
     if (node.columnAlterations) {
       this.compileColumnAlterations(node.columnAlterations)
+    }
+
+    if (node.addIndex) {
+      this.visitNode(node.addIndex)
+    }
+
+    if (node.dropIndex) {
+      this.visitNode(node.dropIndex)
     }
   }
 
@@ -1188,6 +1272,11 @@ export class DefaultQueryCompiler
       this.visitNode(node.rawModifier)
     } else {
       this.append(SELECT_MODIFIER_SQL[node.modifier!])
+    }
+
+    if (node.of) {
+      this.append(' of ')
+      this.compileList(node.of, ', ')
     }
   }
 
@@ -1403,6 +1492,90 @@ export class DefaultQueryCompiler
     }
   }
 
+  protected override visitMergeQuery(node: MergeQueryNode): void {
+    if (node.with) {
+      this.visitNode(node.with)
+      this.append(' ')
+    }
+
+    this.append('merge ')
+
+    if (node.top) {
+      this.visitNode(node.top)
+      this.append(' ')
+    }
+
+    this.append('into ')
+    this.visitNode(node.into)
+
+    if (node.using) {
+      this.append(' ')
+      this.visitNode(node.using)
+    }
+
+    if (node.whens) {
+      this.append(' ')
+      this.compileList(node.whens)
+    }
+  }
+
+  protected override visitMatched(node: MatchedNode): void {
+    if (node.not) {
+      this.append('not ')
+    }
+
+    this.append('matched')
+
+    if (node.bySource) {
+      this.append(' by source')
+    }
+  }
+
+  protected override visitAddIndex(node: AddIndexNode): void {
+    this.append('add ')
+
+    if (node.unique) {
+      this.append('unique ')
+    }
+
+    this.append('index ')
+
+    this.visitNode(node.name)
+
+    if (node.columns) {
+      this.append(' (')
+      this.compileList(node.columns)
+      this.append(')')
+    }
+
+    if (node.using) {
+      this.append(' using ')
+      this.visitNode(node.using)
+    }
+  }
+
+  protected override visitCast(node: CastNode): void {
+    this.append('cast(')
+    this.visitNode(node.expression)
+    this.append(' as ')
+    this.visitNode(node.dataType)
+    this.append(')')
+  }
+  
+  protected override visitFetch(node: FetchNode): void {
+    this.append('fetch next ')
+    this.visitNode(node.rowCount)
+    this.append(` rows ${node.modifier}`)
+  }
+
+  protected override visitTop(node: TopNode): void {
+    this.append(`top(${node.expression})`)
+
+    if (node.modifiers) {
+      this.append(` ${node.modifiers}`)
+    }
+  }
+
   protected append(str: string): void {
     this.#sql += str
   }
@@ -1479,20 +1652,20 @@ export class DefaultQueryCompiler
   }
 
   protected sortSelectModifiers(
-    arr: SelectModifierNode[]
+    arr: SelectModifierNode[],
   ): ReadonlyArray<SelectModifierNode> {
     arr.sort((left, right) =>
       left.modifier && right.modifier
         ? SELECT_MODIFIER_PRIORITY[left.modifier] -
           SELECT_MODIFIER_PRIORITY[right.modifier]
-        : 1
+        : 1,
     )
 
     return freeze(arr)
   }
 
   protected compileColumnAlterations(
-    columnAlterations: readonly AlterTableColumnAlterationNode[]
+    columnAlterations: readonly AlterTableColumnAlterationNode[],
   ) {
     this.compileList(columnAlterations)
   }
@@ -1534,4 +1707,5 @@ const JOIN_TYPE_SQL: Readonly<Record<JoinType, string>> = freeze({
   FullJoin: 'full join',
   LateralInnerJoin: 'inner join lateral',
   LateralLeftJoin: 'left join lateral',
+  Using: 'using',
 })

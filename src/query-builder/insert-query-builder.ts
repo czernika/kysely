@@ -9,8 +9,6 @@ import {
 } from '../parser/select-parser.js'
 import {
   InsertExpression,
-  InsertObjectOrList,
-  InsertObjectOrListFactory,
   parseInsertExpression,
 } from '../parser/insert-values-parser.js'
 import { InsertQueryNode } from '../operation-node/insert-query-node.js'
@@ -60,6 +58,7 @@ import { Explainable, ExplainFormat } from '../util/explainable.js'
 import { Expression } from '../expression/expression.js'
 import { KyselyTypeError } from '../util/type-error.js'
 import { Streamable } from '../util/streamable.js'
+import { parseTop } from '../parser/top-parser.js'
 
 export class InsertQueryBuilder<DB, TB extends keyof DB, O>
   implements
@@ -187,11 +186,14 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
    * ```ts
    * import { sql } from 'kysely'
    *
+   * const ani = "Ani"
+   * const ston = "ston"
+   *
    * const result = await db
    *   .insertInto('person')
    *   .values(({ ref, selectFrom, fn }) => ({
    *     first_name: 'Jennifer',
-   *     last_name: sql`${'Ani'} || ${'ston'}`,
+   *     last_name: sql`concat(${ani}, ${ston})`,
    *     middle_name: ref('first_name'),
    *     age: selectFrom('person')
    *       .select(fn.avg<number>('age')
@@ -211,7 +213,7 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
    * )
    * values (
    *   $1,
-   *   $2 || $3,
+   *   concat($2, $3),
    *   "first_name",
    *   (select avg("age") as "avg_age" from "person")
    * )
@@ -232,12 +234,6 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
    * }))
    * ```
    */
-  values(insert: InsertObjectOrList<DB, TB>): InsertQueryBuilder<DB, TB, O>
-
-  values(
-    insert: InsertObjectOrListFactory<DB, TB>
-  ): InsertQueryBuilder<DB, TB, O>
-
   values(insert: InsertExpression<DB, TB>): InsertQueryBuilder<DB, TB, O> {
     const [columns, values] = parseInsertExpression(insert)
 
@@ -273,7 +269,7 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
    * ```
    */
   columns(
-    columns: ReadonlyArray<keyof DB[TB] & string>
+    columns: ReadonlyArray<keyof DB[TB] & string>,
   ): InsertQueryBuilder<DB, TB, O> {
     return new InsertQueryBuilder({
       ...this.#props,
@@ -314,12 +310,32 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
    * ```
    */
   expression(
-    expression: ExpressionOrFactory<DB, TB, any>
+    expression: ExpressionOrFactory<DB, TB, any>,
   ): InsertQueryBuilder<DB, TB, O> {
     return new InsertQueryBuilder({
       ...this.#props,
       queryNode: InsertQueryNode.cloneWith(this.#props.queryNode, {
         values: parseExpression(expression),
+      }),
+    })
+  }
+
+  /**
+   * Creates an `insert into "person" default values` query.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * await db.insertInto('person')
+   *   .defaultValues()
+   *   .execute()
+   * ```
+   */
+  defaultValues(): InsertQueryBuilder<DB, TB, O> {
+    return new InsertQueryBuilder({
+      ...this.#props,
+      queryNode: InsertQueryNode.cloneWith(this.#props.queryNode, {
+        defaultValues: true,
       }),
     })
   }
@@ -351,6 +367,62 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
       queryNode: InsertQueryNode.cloneWith(this.#props.queryNode, {
         ignore: true,
       }),
+    })
+  }
+
+  /**
+   * Changes an `insert into` query to an `insert top into` query.
+   *
+   * `top` clause is only supported by some dialects like MS SQL Server.
+   *
+   * ### Examples
+   *
+   * Insert the first 5 rows:
+   *
+   * ```ts
+   * await db.insertInto('person')
+   *   .top(5)
+   *   .columns(['first_name', 'gender'])
+   *   .expression(
+   *     (eb) => eb.selectFrom('pet').select(['name', sql.lit('other').as('gender')])
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (MS SQL Server):
+   *
+   * ```sql
+   * insert top(5) into "person" ("first_name", "gender") select "name", 'other' as "gender" from "pet"
+   * ```
+   *
+   * Insert the first 50 percent of rows:
+   *
+   * ```ts
+   * await db.insertInto('person')
+   *   .top(50, 'percent')
+   *   .columns(['first_name', 'gender'])
+   *   .expression(
+   *     (eb) => eb.selectFrom('pet').select(['name', sql.lit('other').as('gender')])
+   *   )
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (MS SQL Server):
+   *
+   * ```sql
+   * insert top(50) percent into "person" ("first_name", "gender") select "name", 'other' as "gender" from "pet"
+   * ```
+   */
+  top(
+    expression: number | bigint,
+    modifiers?: 'percent',
+  ): InsertQueryBuilder<DB, TB, O> {
+    return new InsertQueryBuilder({
+      ...this.#props,
+      queryNode: QueryNode.cloneWithTop(
+        this.#props.queryNode,
+        parseTop(expression, modifiers),
+      ),
     })
   }
 
@@ -507,13 +579,13 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
    */
   onConflict(
     callback: (
-      builder: OnConflictBuilder<DB, TB>
+      builder: OnConflictBuilder<DB, TB>,
     ) =>
       | OnConflictUpdateBuilder<
           OnConflictDatabase<DB, TB>,
           OnConflictTables<TB>
         >
-      | OnConflictDoNothingBuilder<DB, TB>
+      | OnConflictDoNothingBuilder<DB, TB>,
   ): InsertQueryBuilder<DB, TB, O> {
     return new InsertQueryBuilder({
       ...this.#props,
@@ -521,7 +593,7 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
         onConflict: callback(
           new OnConflictBuilder({
             onConflictNode: OnConflictNode.create(),
-          })
+          }),
         ).toOperationNode(),
       }),
     })
@@ -546,38 +618,38 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
    * ```
    */
   onDuplicateKeyUpdate(
-    update: UpdateObjectExpression<DB, TB, TB>
+    update: UpdateObjectExpression<DB, TB, TB>,
   ): InsertQueryBuilder<DB, TB, O> {
     return new InsertQueryBuilder({
       ...this.#props,
       queryNode: InsertQueryNode.cloneWith(this.#props.queryNode, {
         onDuplicateKey: OnDuplicateKeyNode.create(
-          parseUpdateObjectExpression(update)
+          parseUpdateObjectExpression(update),
         ),
       }),
     })
   }
 
   returning<SE extends SelectExpression<DB, TB>>(
-    selections: ReadonlyArray<SE>
+    selections: ReadonlyArray<SE>,
   ): InsertQueryBuilder<DB, TB, ReturningRow<DB, TB, O, SE>>
 
   returning<CB extends SelectCallback<DB, TB>>(
-    callback: CB
+    callback: CB,
   ): InsertQueryBuilder<DB, TB, ReturningCallbackRow<DB, TB, O, CB>>
 
   returning<SE extends SelectExpression<DB, TB>>(
-    selection: SE
+    selection: SE,
   ): InsertQueryBuilder<DB, TB, ReturningRow<DB, TB, O, SE>>
 
   returning<SE extends SelectExpression<DB, TB>>(
-    selection: SelectArg<DB, TB, SE>
+    selection: SelectArg<DB, TB, SE>,
   ): InsertQueryBuilder<DB, TB, ReturningRow<DB, TB, O, SE>> {
     return new InsertQueryBuilder({
       ...this.#props,
       queryNode: QueryNode.cloneWithReturning(
         this.#props.queryNode,
-        parseSelectArg(selection)
+        parseSelectArg(selection),
       ),
     })
   }
@@ -587,8 +659,33 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
       ...this.#props,
       queryNode: QueryNode.cloneWithReturning(
         this.#props.queryNode,
-        parseSelectAll()
+        parseSelectAll(),
       ),
+    })
+  }
+
+  /**
+   * Clears all `returning` clauses from the query.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * db.insertInto('person')
+   *   .values({ first_name: 'James', last_name: 'Smith', age: 42 })
+   *   .returning(['first_name'])
+   *   .clearReturning()
+   * ```
+   *
+   * The generated SQL(PostgreSQL):
+   *
+   * ```sql
+   * insert into "person" ("James", "Smith", 42)
+   * ```
+   */
+  clearReturning(): InsertQueryBuilder<DB, TB, InsertResult> {
+    return new InsertQueryBuilder({
+      ...this.#props,
+      queryNode: QueryNode.cloneWithoutReturning(this.#props.queryNode),
     })
   }
 
@@ -656,7 +753,7 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
    */
   $if<O2>(
     condition: boolean,
-    func: (qb: this) => InsertQueryBuilder<any, any, O2>
+    func: (qb: this) => InsertQueryBuilder<any, any, O2>,
   ): O2 extends InsertResult
     ? InsertQueryBuilder<DB, TB, InsertResult>
     : O2 extends O & infer E
@@ -674,10 +771,10 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
   /**
    * Change the output type of the query.
    *
-   * You should only use this method as the last resort if the types
-   * don't support your use case.
+   * This method call doesn't change the SQL in any way. This methods simply
+   * returns a copy of this `InsertQueryBuilder` with a new output type.
    */
-  $castTo<T>(): InsertQueryBuilder<DB, TB, T> {
+  $castTo<C>(): InsertQueryBuilder<DB, TB, C> {
     return new InsertQueryBuilder(this.#props)
   }
 
@@ -785,14 +882,14 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
   toOperationNode(): InsertQueryNode {
     return this.#props.executor.transformQuery(
       this.#props.queryNode,
-      this.#props.queryId
+      this.#props.queryId,
     )
   }
 
   compile(): CompiledQuery<O> {
     return this.#props.executor.compileQuery(
       this.toOperationNode(),
-      this.#props.queryId
+      this.#props.queryId,
     )
   }
 
@@ -807,7 +904,7 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
 
     const result = await this.#props.executor.executeQuery<O>(
       compiledQuery,
-      this.#props.queryId
+      this.#props.queryId,
     )
 
     if (this.#props.executor.adapter.supportsReturning && query.returning) {
@@ -818,7 +915,7 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
       new InsertResult(
         result.insertId,
         // TODO: remove numUpdatedOrDeletedRows.
-        result.numAffectedRows ?? result.numUpdatedOrDeletedRows
+        result.numAffectedRows ?? result.numUpdatedOrDeletedRows,
       ) as any,
     ]
   }
@@ -843,7 +940,7 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
   async executeTakeFirstOrThrow(
     errorConstructor:
       | NoResultErrorConstructor
-      | ((node: QueryNode) => Error) = NoResultError
+      | ((node: QueryNode) => Error) = NoResultError,
   ): Promise<SimplifyResult<O>> {
     const result = await this.executeTakeFirst()
 
@@ -864,7 +961,7 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
     const stream = this.#props.executor.stream<O>(
       compiledQuery,
       chunkSize,
-      this.#props.queryId
+      this.#props.queryId,
     )
 
     for await (const item of stream) {
@@ -874,14 +971,14 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
 
   async explain<ER extends Record<string, any> = Record<string, any>>(
     format?: ExplainFormat,
-    options?: Expression<any>
+    options?: Expression<any>,
   ): Promise<ER[]> {
     const builder = new InsertQueryBuilder<DB, TB, ER>({
       ...this.#props,
       queryNode: QueryNode.cloneWithExplain(
         this.#props.queryNode,
         format,
-        options
+        options,
       ),
     })
 
@@ -891,7 +988,7 @@ export class InsertQueryBuilder<DB, TB extends keyof DB, O>
 
 preventAwait(
   InsertQueryBuilder,
-  "don't await InsertQueryBuilder instances directly. To execute the query you need to call `execute` or `executeTakeFirst`."
+  "don't await InsertQueryBuilder instances directly. To execute the query you need to call `execute` or `executeTakeFirst`.",
 )
 
 export interface InsertQueryBuilderProps {

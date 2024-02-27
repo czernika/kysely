@@ -66,13 +66,19 @@ function defaultLogger(event: LogEvent): void {
   if (event.level === 'query') {
     console.log(`kysely:query: ${event.query.sql}`)
     console.log(
-      `kysely:query: duration: ${event.queryDurationMillis.toFixed(1)}ms`
+      `kysely:query: duration: ${event.queryDurationMillis.toFixed(1)}ms`,
     )
   } else if (event.level === 'error') {
     if (event.error instanceof Error) {
       console.error(`kysely:error: ${event.error.stack ?? event.error.message}`)
     } else {
-      console.error(`kysely:error: ${event}`)
+      console.error(
+        `kysely:error: ${JSON.stringify({
+          error: event.error,
+          query: event.query.sql,
+          queryDurationMillis: event.queryDurationMillis,
+        })}`,
+      )
     }
   }
 }

@@ -88,7 +88,18 @@ export interface RawBuilder<O> extends AliasableExpression<O> {
    * This method call doesn't change the SQL in any way. This methods simply
    * returns a copy of this `RawBuilder` with a new output type.
    */
-  $castTo<T>(): RawBuilder<T>
+  $castTo<C>(): RawBuilder<C>
+
+  /**
+   * Omit null from the expression's type.
+   *
+   * This function can be useful in cases where you know an expression can't be
+   * null, but Kysely is unable to infer it.
+   *
+   * This method call doesn't change the SQL in any way. This methods simply
+   * returns a copy of `this` with a new output type.
+   */
+  $notNull(): RawBuilder<Exclude<O, null>>
 
   /**
    * Adds a plugin for this SQL snippet.
@@ -140,8 +151,12 @@ class RawBuilderImpl<O> implements RawBuilder<O> {
     return new AliasedRawBuilderImpl(this, alias)
   }
 
-  $castTo<T>(): RawBuilder<T> {
+  $castTo<C>(): RawBuilder<C> {
     return new RawBuilderImpl({ ...this.#props })
+  }
+
+  $notNull(): RawBuilder<Exclude<O, null>> {
+    return new RawBuilderImpl(this.#props)
   }
 
   withPlugin(plugin: KyselyPlugin): RawBuilder<O> {
@@ -163,13 +178,13 @@ class RawBuilderImpl<O> implements RawBuilder<O> {
   }
 
   async execute(
-    executorProvider: QueryExecutorProvider
+    executorProvider: QueryExecutorProvider,
   ): Promise<QueryResult<O>> {
     const executor = this.#getExecutor(executorProvider)
 
     return executor.executeQuery<O>(
       this.#compile(executor),
-      this.#props.queryId
+      this.#props.queryId,
     )
   }
 
@@ -191,7 +206,7 @@ class RawBuilderImpl<O> implements RawBuilder<O> {
   #compile(executor: QueryExecutor): CompiledQuery {
     return executor.compileQuery(
       this.#toOperationNode(executor),
-      this.#props.queryId
+      this.#props.queryId,
     )
   }
 }
@@ -208,7 +223,7 @@ export function createRawBuilder<O>(props: RawBuilderProps): RawBuilder<O> {
 
 preventAwait(
   RawBuilderImpl,
-  "don't await RawBuilder instances directly. To execute the query you need to call `execute`"
+  "don't await RawBuilder instances directly. To execute the query you need to call `execute`",
 )
 
 /**
@@ -247,12 +262,12 @@ class AliasedRawBuilderImpl<O = unknown, A extends string = never>
       this.#rawBuilder.toOperationNode(),
       isOperationNodeSource(this.#alias)
         ? this.#alias.toOperationNode()
-        : IdentifierNode.create(this.#alias)
+        : IdentifierNode.create(this.#alias),
     )
   }
 }
 
 preventAwait(
   AliasedRawBuilderImpl,
-  "don't await AliasedRawBuilder instances directly. AliasedRawBuilder should never be executed directly since it's always a part of another query."
+  "don't await AliasedRawBuilder instances directly. AliasedRawBuilder should never be executed directly since it's always a part of another query.",
 )

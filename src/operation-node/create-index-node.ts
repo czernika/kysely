@@ -22,6 +22,7 @@ export interface CreateIndexNode extends OperationNode {
   readonly using?: RawNode
   readonly ifNotExists?: boolean
   readonly where?: WhereNode
+  readonly nullsNotDistinct?: boolean
 }
 
 /**
@@ -41,7 +42,7 @@ export const CreateIndexNode = freeze({
 
   cloneWith(
     node: CreateIndexNode,
-    props: CreateIndexNodeProps
+    props: CreateIndexNodeProps,
   ): CreateIndexNode {
     return freeze({
       ...node,
@@ -51,7 +52,7 @@ export const CreateIndexNode = freeze({
 
   cloneWithColumns(
     node: CreateIndexNode,
-    columns: OperationNode[]
+    columns: OperationNode[],
   ): CreateIndexNode {
     return freeze({
       ...node,

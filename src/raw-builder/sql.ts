@@ -1,4 +1,5 @@
 import { IdentifierNode } from '../operation-node/identifier-node.js'
+import { isOperationNodeSource } from '../operation-node/operation-node-source.js'
 import { OperationNode } from '../operation-node/operation-node.js'
 import { RawNode } from '../operation-node/raw-node.js'
 import { ValueNode } from '../operation-node/value-node.js'
@@ -365,7 +366,7 @@ export interface Sql {
    */
   join(
     array: readonly unknown[],
-    separator?: RawBuilder<any>
+    separator?: RawBuilder<any>,
   ): RawBuilder<unknown>
 }
 
@@ -378,7 +379,7 @@ export const sql: Sql = Object.assign(
       queryId: createQueryId(),
       rawNode: RawNode.create(
         sqlFragments,
-        parameters?.map(parseValueExpression) ?? []
+        parameters?.map(parseParameter) ?? [],
       ),
     })
   },
@@ -440,13 +441,13 @@ export const sql: Sql = Object.assign(
 
     join(
       array: readonly unknown[],
-      separator: RawBuilder<any> = sql`, `
+      separator: RawBuilder<any> = sql`, `,
     ): RawBuilder<unknown> {
       const nodes = new Array<OperationNode>(2 * array.length - 1)
       const sep = separator.toOperationNode()
 
       for (let i = 0; i < array.length; ++i) {
-        nodes[2 * i] = parseValueExpression(array[i])
+        nodes[2 * i] = parseParameter(array[i])
 
         if (i !== array.length - 1) {
           nodes[2 * i + 1] = sep
@@ -458,5 +459,13 @@ export const sql: Sql = Object.assign(
         rawNode: RawNode.createWithChildren(nodes),
       })
     },
-  }
+  },
 )
+
+function parseParameter(param: unknown): OperationNode {
+  if (isOperationNodeSource(param)) {
+    return param.toOperationNode()
+  }
+
+  return parseValueExpression(param)
+}

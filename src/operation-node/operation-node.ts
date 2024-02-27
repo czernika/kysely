@@ -85,6 +85,12 @@ export type OperationNodeKind =
   | 'JSONPathLegNode'
   | 'JSONOperatorChainNode'
   | 'TupleNode'
+  | 'MergeQueryNode'
+  | 'MatchedNode'
+  | 'AddIndexNode'
+  | 'CastNode'
+  | 'FetchNode'
+  | 'TopNode'
 
 export interface OperationNode {
   readonly kind: OperationNodeKind

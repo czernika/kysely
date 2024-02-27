@@ -17,9 +17,9 @@ import { OperationNode } from '../operation-node/operation-node.js'
 import { ValueNode } from '../operation-node/value-node.js'
 
 export class JSONPathBuilder<S, O = S> {
-  readonly #node: JSONReferenceNode
+  readonly #node: JSONReferenceNode | JSONPathNode
 
-  constructor(node: JSONReferenceNode) {
+  constructor(node: JSONReferenceNode | JSONPathNode) {
     this.#node = node
   }
 
@@ -89,9 +89,9 @@ export class JSONPathBuilder<S, O = S> {
    */
   at<
     I extends any[] extends O ? number | 'last' | `#-${number}` : never,
-    O2 = null | NonNullable<NonNullable<O>[keyof NonNullable<O> & number]>
+    O2 = null | NonNullable<NonNullable<O>[keyof NonNullable<O> & number]>,
   >(
-    index: `${I}` extends `${any}.${any}` | `#--${any}` ? never : I
+    index: `${I}` extends `${any}.${any}` | `#--${any}` ? never : I,
   ): TraversedJSONPathBuilder<S, O2> {
     return this.#createBuilderWithPathLeg('ArrayLocation', index)
   }
@@ -149,37 +149,46 @@ export class JSONPathBuilder<S, O = S> {
     K extends any[] extends O
       ? never
       : O extends object
-      ? keyof NonNullable<O> & string
-      : never,
+        ? keyof NonNullable<O> & string
+        : never,
     O2 = undefined extends O
       ? null | NonNullable<NonNullable<O>[K]>
       : null extends O
-      ? null | NonNullable<NonNullable<O>[K]>
-      : // when the object has non-specific keys, e.g. Record<string, T>, should infer `T | null`!
-      string extends keyof NonNullable<O>
-      ? null | NonNullable<NonNullable<O>[K]>
-      : NonNullable<O>[K]
+        ? null | NonNullable<NonNullable<O>[K]>
+        : // when the object has non-specific keys, e.g. Record<string, T>, should infer `T | null`!
+          string extends keyof NonNullable<O>
+          ? null | NonNullable<NonNullable<O>[K]>
+          : NonNullable<O>[K],
   >(key: K): TraversedJSONPathBuilder<S, O2> {
     return this.#createBuilderWithPathLeg('Member', key)
   }
 
   #createBuilderWithPathLeg(
     legType: JSONPathLegType,
-    value: string | number
+    value: string | number,
   ): TraversedJSONPathBuilder<any, any> {
-    return new TraversedJSONPathBuilder(
-      JSONReferenceNode.cloneWithTraversal(
-        this.#node,
-        JSONPathNode.is(this.#node.traversal)
-          ? JSONPathNode.cloneWithLeg(
-              this.#node.traversal,
-              JSONPathLegNode.create(legType, value)
-            )
-          : JSONOperatorChainNode.cloneWithValue(
-              this.#node.traversal,
-              ValueNode.createImmediate(value)
-            )
+    if (JSONReferenceNode.is(this.#node)) {
+      return new TraversedJSONPathBuilder(
+        JSONReferenceNode.cloneWithTraversal(
+          this.#node,
+          JSONPathNode.is(this.#node.traversal)
+            ? JSONPathNode.cloneWithLeg(
+                this.#node.traversal,
+                JSONPathLegNode.create(legType, value),
+              )
+            : JSONOperatorChainNode.cloneWithValue(
+                this.#node.traversal,
+                ValueNode.createImmediate(value),
+              ),
+        ),
       )
+    }
+
+    return new TraversedJSONPathBuilder(
+      JSONPathNode.cloneWithLeg(
+        this.#node,
+        JSONPathLegNode.create(legType, value),
+      ),
     )
   }
 }
@@ -188,9 +197,9 @@ export class TraversedJSONPathBuilder<S, O>
   extends JSONPathBuilder<S, O>
   implements AliasableExpression<O>
 {
-  readonly #node: JSONReferenceNode
+  readonly #node: JSONReferenceNode | JSONPathNode
 
-  constructor(node: JSONReferenceNode) {
+  constructor(node: JSONReferenceNode | JSONPathNode) {
     super(node)
     this.#node = node
   }
@@ -237,7 +246,11 @@ export class TraversedJSONPathBuilder<S, O>
    * This method call doesn't change the SQL in any way. This methods simply
    * returns a copy of this `JSONPathBuilder` with a new output type.
    */
-  $castTo<T>(): JSONPathBuilder<T> {
+  $castTo<C>(): JSONPathBuilder<C> {
+    return new JSONPathBuilder(this.#node)
+  }
+
+  $notNull(): JSONPathBuilder<Exclude<O, null>> {
     return new JSONPathBuilder(this.#node)
   }
 
@@ -254,7 +267,7 @@ export class AliasedJSONPathBuilder<O, A extends string>
 
   constructor(
     jsonPath: TraversedJSONPathBuilder<any, O>,
-    alias: A | Expression<unknown>
+    alias: A | Expression<unknown>,
   ) {
     this.#jsonPath = jsonPath
     this.#alias = alias
@@ -275,7 +288,7 @@ export class AliasedJSONPathBuilder<O, A extends string>
       this.#jsonPath.toOperationNode(),
       isOperationNodeSource(this.#alias)
         ? this.#alias.toOperationNode()
-        : IdentifierNode.create(this.#alias)
+        : IdentifierNode.create(this.#alias),
     )
   }
 }

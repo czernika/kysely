@@ -10,6 +10,7 @@ import {
   parseValueBinaryOperationOrExpression,
 } from '../parser/binary-operation-parser.js'
 import {
+  ExtractTypeFromValueExpression,
   isSafeImmediateValue,
   parseSafeImmediateValue,
   parseValueExpression,
@@ -25,12 +26,15 @@ export class CaseBuilder<DB, TB extends keyof DB, W = unknown, O = never>
     this.#props = freeze(props)
   }
 
-  when<RE extends ReferenceExpression<DB, TB>>(
+  when<
+    RE extends ReferenceExpression<DB, TB>,
+    VE extends OperandValueExpressionOrList<DB, TB, RE>,
+  >(
     lhs: unknown extends W
       ? RE
       : KyselyTypeError<'when(lhs, op, rhs) is not supported when using case(value)'>,
     op: ComparisonOperatorExpression,
-    rhs: OperandValueExpressionOrList<DB, TB, RE>
+    rhs: VE,
   ): CaseThenBuilder<DB, TB, W, O>
 
   when(expression: Expression<W>): CaseThenBuilder<DB, TB, W, O>
@@ -38,7 +42,7 @@ export class CaseBuilder<DB, TB extends keyof DB, W = unknown, O = never>
   when(
     value: unknown extends W
       ? KyselyTypeError<'when(value) is only supported when using case(value)'>
-      : W
+      : W,
   ): CaseThenBuilder<DB, TB, W, O>
 
   when(...args: any[]): any {
@@ -46,7 +50,7 @@ export class CaseBuilder<DB, TB extends keyof DB, W = unknown, O = never>
       ...this.#props,
       node: CaseNode.cloneWithWhen(
         this.#props.node,
-        WhenNode.create(parseValueBinaryOperationOrExpression(args))
+        WhenNode.create(parseValueBinaryOperationOrExpression(args)),
       ),
     })
   }
@@ -69,7 +73,9 @@ export class CaseThenBuilder<DB, TB extends keyof DB, W, O> {
    * A `then` call can be followed by {@link Whenable.when}, {@link CaseWhenBuilder.else},
    * {@link CaseWhenBuilder.end} or {@link CaseWhenBuilder.endCase} call.
    */
-  then<O2>(expression: Expression<O2>): CaseWhenBuilder<DB, TB, W, O | O2>
+  then<E extends Expression<unknown>>(
+    expression: E,
+  ): CaseWhenBuilder<DB, TB, W, O | ExtractTypeFromValueExpression<E>>
 
   then<V>(value: V): CaseWhenBuilder<DB, TB, W, O | V>
 
@@ -80,7 +86,7 @@ export class CaseThenBuilder<DB, TB extends keyof DB, W, O> {
         this.#props.node,
         isSafeImmediateValue(valueExpression)
           ? parseSafeImmediateValue(valueExpression)
-          : parseValueExpression(valueExpression)
+          : parseValueExpression(valueExpression),
       ),
     })
   }
@@ -95,12 +101,15 @@ export class CaseWhenBuilder<DB, TB extends keyof DB, W, O>
     this.#props = freeze(props)
   }
 
-  when<RE extends ReferenceExpression<DB, TB>>(
+  when<
+    RE extends ReferenceExpression<DB, TB>,
+    VE extends OperandValueExpressionOrList<DB, TB, RE>,
+  >(
     lhs: unknown extends W
       ? RE
       : KyselyTypeError<'when(lhs, op, rhs) is not supported when using case(value)'>,
     op: ComparisonOperatorExpression,
-    rhs: OperandValueExpressionOrList<DB, TB, RE>
+    rhs: VE,
   ): CaseThenBuilder<DB, TB, W, O>
 
   when(expression: Expression<W>): CaseThenBuilder<DB, TB, W, O>
@@ -108,7 +117,7 @@ export class CaseWhenBuilder<DB, TB extends keyof DB, W, O>
   when(
     value: unknown extends W
       ? KyselyTypeError<'when(value) is only supported when using case(value)'>
-      : W
+      : W,
   ): CaseThenBuilder<DB, TB, W, O>
 
   when(...args: any[]): any {
@@ -116,7 +125,7 @@ export class CaseWhenBuilder<DB, TB extends keyof DB, W, O>
       ...this.#props,
       node: CaseNode.cloneWithWhen(
         this.#props.node,
-        WhenNode.create(parseValueBinaryOperationOrExpression(args))
+        WhenNode.create(parseValueBinaryOperationOrExpression(args)),
       ),
     })
   }
@@ -126,7 +135,9 @@ export class CaseWhenBuilder<DB, TB extends keyof DB, W, O>
    *
    * An `else` call must be followed by an {@link Endable.end} or {@link Endable.endCase} call.
    */
-  else<O2>(expression: Expression<O2>): CaseEndBuilder<DB, TB, O | O2>
+  else<E extends Expression<unknown>>(
+    expression: E,
+  ): CaseEndBuilder<DB, TB, O | ExtractTypeFromValueExpression<E>>
 
   else<V>(value: V): CaseEndBuilder<DB, TB, O | V>
 
@@ -143,13 +154,13 @@ export class CaseWhenBuilder<DB, TB extends keyof DB, W, O>
 
   end(): ExpressionWrapper<DB, TB, O | null> {
     return new ExpressionWrapper(
-      CaseNode.cloneWith(this.#props.node, { isStatement: false })
+      CaseNode.cloneWith(this.#props.node, { isStatement: false }),
     )
   }
 
   endCase(): ExpressionWrapper<DB, TB, O | null> {
     return new ExpressionWrapper(
-      CaseNode.cloneWith(this.#props.node, { isStatement: true })
+      CaseNode.cloneWith(this.#props.node, { isStatement: true }),
     )
   }
 }
@@ -165,13 +176,13 @@ export class CaseEndBuilder<DB, TB extends keyof DB, O>
 
   end(): ExpressionWrapper<DB, TB, O> {
     return new ExpressionWrapper(
-      CaseNode.cloneWith(this.#props.node, { isStatement: false })
+      CaseNode.cloneWith(this.#props.node, { isStatement: false }),
     )
   }
 
   endCase(): ExpressionWrapper<DB, TB, O> {
     return new ExpressionWrapper(
-      CaseNode.cloneWith(this.#props.node, { isStatement: true })
+      CaseNode.cloneWith(this.#props.node, { isStatement: true }),
     )
   }
 }
@@ -182,12 +193,15 @@ interface Whenable<DB, TB extends keyof DB, W, O> {
    *
    * A `when` call must be followed by a {@link CaseThenBuilder.then} call.
    */
-  when<RE extends ReferenceExpression<DB, TB>>(
+  when<
+    RE extends ReferenceExpression<DB, TB>,
+    VE extends OperandValueExpressionOrList<DB, TB, RE>,
+  >(
     lhs: unknown extends W
       ? RE
       : KyselyTypeError<'when(lhs, op, rhs) is not supported when using case(value)'>,
     op: ComparisonOperatorExpression,
-    rhs: OperandValueExpressionOrList<DB, TB, RE>
+    rhs: VE,
   ): CaseThenBuilder<DB, TB, W, O>
 
   when(expression: Expression<W>): CaseThenBuilder<DB, TB, W, O>
@@ -195,7 +209,7 @@ interface Whenable<DB, TB extends keyof DB, W, O> {
   when(
     value: unknown extends W
       ? KyselyTypeError<'when(value) is only supported when using case(value)'>
-      : W
+      : W,
   ): CaseThenBuilder<DB, TB, W, O>
 }
 

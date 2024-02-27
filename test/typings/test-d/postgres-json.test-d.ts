@@ -21,7 +21,7 @@ async function testPostgresJsonSelects(db: Kysely<Database>) {
           .selectFrom('pet')
           .select(['name', 'species'])
           .whereRef('owner_id', '=', 'person.id')
-          .orderBy('pet.name')
+          .orderBy('pet.name'),
       ).as('pets'),
 
     // Nest the first found dog the person owns. Only select specific fields
@@ -34,7 +34,7 @@ async function testPostgresJsonSelects(db: Kysely<Database>) {
           .whereRef('owner_id', '=', 'person.id')
           .where('species', '=', 'dog')
           .orderBy('name')
-          .limit(1)
+          .limit(1),
       ).as('doggo'),
 
     // Nest an object that holds the person's formatted name.
@@ -128,6 +128,47 @@ async function testPostgresJsonAgg(db: Kysely<Database>) {
       pets: Selectable<Pet>[] | null
     }[]
   >(r3)
+
+  const db2 = db.withTables<{
+    acquisition: {
+      id: number
+    }
+    transaction: {
+      id: number
+      acquisitionId: number
+      status: string
+    }
+  }>()
+
+  const r4 = await db2
+    .selectFrom('acquisition')
+    .leftJoin('transaction', 'transaction.acquisitionId', 'acquisition.id')
+    .select(({ ref, fn }) => [
+      'acquisition.id',
+      fn
+        .coalesce(
+          fn
+            .jsonAgg(
+              jsonBuildObject({
+                id: ref('transaction.id').$notNull(),
+                status: ref('transaction.status'),
+              }),
+            )
+            .filterWhere('transaction.id', 'is not', null),
+          sql`'[]'`,
+        )
+        .as('transactions'),
+    ])
+    .groupBy('acquisition.id')
+    .executeTakeFirstOrThrow()
+
+  expectType<{
+    id: number
+    transactions: {
+      id: number
+      status: string | null
+    }[]
+  }>(r4)
 }
 
 async function testPostgresToJson(db: Kysely<Database>) {
@@ -151,7 +192,7 @@ function withPets(eb: ExpressionBuilder<Database, 'person'>) {
       .selectFrom('pet')
       .select(['name', 'species'])
       .whereRef('owner_id', '=', 'person.id')
-      .orderBy('pet.name')
+      .orderBy('pet.name'),
   ).as('pets')
 }
 
@@ -163,6 +204,6 @@ function withDoggo(eb: ExpressionBuilder<Database, 'person'>) {
       .whereRef('owner_id', '=', 'person.id')
       .where('species', '=', 'dog')
       .orderBy('name')
-      .limit(1)
+      .limit(1),
   ).as('doggo')
 }

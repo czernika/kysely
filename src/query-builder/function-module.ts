@@ -1,12 +1,16 @@
-import { DynamicReferenceBuilder } from '../dynamic/dynamic-reference-builder.js'
 import { ExpressionWrapper } from '../expression/expression-wrapper.js'
 import { Expression } from '../expression/expression.js'
 import { AggregateFunctionNode } from '../operation-node/aggregate-function-node.js'
 import { FunctionNode } from '../operation-node/function-node.js'
-import { CoalesceReferenceExpressionList } from '../parser/coalesce-parser.js'
+import {
+  ExtractTypeFromCoalesce1,
+  ExtractTypeFromCoalesce3,
+  ExtractTypeFromCoalesce2,
+  ExtractTypeFromCoalesce4,
+  ExtractTypeFromCoalesce5,
+} from '../parser/coalesce-parser.js'
 import {
   ExtractTypeFromReferenceExpression,
-  SimpleReferenceExpression,
   ReferenceExpression,
   StringReference,
   parseReferenceExpressionOrList,
@@ -14,7 +18,7 @@ import {
 } from '../parser/reference-parser.js'
 import { parseSelectAll } from '../parser/select-parser.js'
 import { KyselyTypeError } from '../util/type-error.js'
-import { Equals, IsAny } from '../util/type-utils.js'
+import { IsNever } from '../util/type-utils.js'
 import { AggregateFunctionBuilder } from './aggregate-function-builder.js'
 import { SelectQueryBuilderExpression } from '../query-builder/select-query-builder-expression.js'
 import { isString } from '../util/object-utils.js'
@@ -31,21 +35,47 @@ import { Selectable } from '../util/column-type.js'
  *
  * <!-- siteExample("select", "Function calls", 60) -->
  *
- * This example uses the `fn` module to select some aggregates:
+ * This example shows how to create function calls. These examples also work in any
+ * other place (`where` calls, updates, inserts etc.). The only difference is that you
+ * leave out the alias (the `as` call) if you use these in any other place than `select`.
  *
  * ```ts
+ * import { sql } from 'kysely'
+ *
  * const result = await db.selectFrom('person')
  *   .innerJoin('pet', 'pet.owner_id', 'person.id')
- *   .select(({ fn }) => [
+ *   .select(({ fn, val, ref }) => [
  *     'person.id',
  *
  *     // The `fn` module contains the most common
  *     // functions.
  *     fn.count<number>('pet.id').as('pet_count'),
  *
- *     // You can call any function using the
- *     // `agg` method
- *     fn.agg<string[]>('array_agg', ['pet.name']).as('pet_names')
+ *     // You can call any function by calling `fn`
+ *     // directly. The arguments are treated as column
+ *     // references by default. If you want  to pass in
+ *     // values, use the `val` function.
+ *     fn<string>('concat', [
+ *       val('Ms. '),
+ *       'first_name',
+ *       val(' '),
+ *       'last_name'
+ *     ]).as('full_name_with_title'),
+ *
+ *     // You can call any aggregate function using the
+ *     // `fn.agg` function.
+ *     fn.agg<string[]>('array_agg', ['pet.name']).as('pet_names'),
+ *
+ *     // And once again, you can use the `sql`
+ *     // template tag. The template tag substitutions
+ *     // are treated as values by default. If you want
+ *     // to reference columns, you can use the `ref`
+ *     // function.
+ *     sql<string>`concat(
+ *       ${ref('first_name')},
+ *       ' ',
+ *       ${ref('last_name')}
+ *     )`.as('full_name')
  *   ])
  *   .groupBy('person.id')
  *   .having((eb) => eb.fn.count('pet.id'), '>', 10)
@@ -58,11 +88,13 @@ import { Selectable } from '../util/column-type.js'
  * select
  *   "person"."id",
  *   count("pet"."id") as "pet_count",
- *   array_agg("pet"."name") as "pet_names"
+ *   concat($1, "first_name", $2, "last_name") as "full_name_with_title",
+ *   array_agg("pet"."name") as "pet_names",
+ *   concat("first_name", ' ', "last_name") as "full_name"
  * from "person"
  * inner join "pet" on "pet"."owner_id" = "person"."id"
  * group by "person"."id"
- * having count("pet"."id") > $1
+ * having count("pet"."id") > $3
  * ```
  */
 export interface FunctionModule<DB, TB extends keyof DB> {
@@ -95,10 +127,10 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    *   .where(sql`upper(first_name)`, '=', 'JENNIFER')
    * ```
    */
-  <T>(
+  <O, RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>>(
     name: string,
-    args: ReadonlyArray<ReferenceExpression<DB, TB>>
-  ): ExpressionWrapper<DB, TB, T>
+    args?: ReadonlyArray<RE>,
+  ): ExpressionWrapper<DB, TB, O>
 
   /**
    * Creates an aggregate function call.
@@ -128,9 +160,9 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * from "person"
    * ```
    */
-  agg<O>(
+  agg<O, RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>>(
     name: string,
-    args?: ReadonlyArray<ReferenceExpression<DB, TB>>
+    args?: ReadonlyArray<RE>,
   ): AggregateFunctionBuilder<DB, TB, O>
 
   /**
@@ -193,9 +225,9 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    */
   avg<
     O extends number | string | null = number | string,
-    C extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
   >(
-    column: C
+    expr: RE,
   ): AggregateFunctionBuilder<DB, TB, O>
 
   /**
@@ -258,16 +290,56 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * select coalesce(avg("age"), 0) as "avg_age" from "person" where "first_name" = $1
    * ```
    */
+  coalesce<V1 extends ReferenceExpression<DB, TB>>(
+    v1: V1,
+  ): ExpressionWrapper<DB, TB, ExtractTypeFromCoalesce1<DB, TB, V1>>
+
   coalesce<
-    V extends ReferenceExpression<DB, TB>,
-    OV extends ReferenceExpression<DB, TB>[]
+    V1 extends ReferenceExpression<DB, TB>,
+    V2 extends ReferenceExpression<DB, TB>,
   >(
-    value: V,
-    ...otherValues: OV
+    v1: V1,
+    v2: V2,
+  ): ExpressionWrapper<DB, TB, ExtractTypeFromCoalesce2<DB, TB, V1, V2>>
+
+  coalesce<
+    V1 extends ReferenceExpression<DB, TB>,
+    V2 extends ReferenceExpression<DB, TB>,
+    V3 extends ReferenceExpression<DB, TB>,
+  >(
+    v1: V1,
+    v2: V2,
+    v3: V3,
+  ): ExpressionWrapper<DB, TB, ExtractTypeFromCoalesce3<DB, TB, V1, V2, V3>>
+
+  coalesce<
+    V1 extends ReferenceExpression<DB, TB>,
+    V2 extends ReferenceExpression<DB, TB>,
+    V3 extends ReferenceExpression<DB, TB>,
+    V4 extends ReferenceExpression<DB, TB>,
+  >(
+    v1: V1,
+    v2: V2,
+    v3: V3,
+    v4: V4,
+  ): ExpressionWrapper<DB, TB, ExtractTypeFromCoalesce4<DB, TB, V1, V2, V3, V4>>
+
+  coalesce<
+    V1 extends ReferenceExpression<DB, TB>,
+    V2 extends ReferenceExpression<DB, TB>,
+    V3 extends ReferenceExpression<DB, TB>,
+    V4 extends ReferenceExpression<DB, TB>,
+    V5 extends ReferenceExpression<DB, TB>,
+  >(
+    v1: V1,
+    v2: V2,
+    v3: V3,
+    v4: V4,
+    v5: V5,
   ): ExpressionWrapper<
     DB,
     TB,
-    CoalesceReferenceExpressionList<DB, TB, [V, ...OV]>
+    ExtractTypeFromCoalesce5<DB, TB, V1, V2, V3, V4, V5>
   >
 
   /**
@@ -322,9 +394,9 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    */
   count<
     O extends number | string | bigint,
-    C extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
   >(
-    column: C
+    expr: RE,
   ): AggregateFunctionBuilder<DB, TB, O>
 
   /**
@@ -397,7 +469,7 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * ```
    */
   countAll<O extends number | string | bigint, T extends TB = TB>(
-    table: T
+    table: T,
   ): AggregateFunctionBuilder<DB, TB, O>
 
   countAll<O extends number | string | bigint>(): AggregateFunctionBuilder<
@@ -448,20 +520,22 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    *
    * ```ts
    * db.selectFrom('toy')
-   *   .select((eb) => eb.fn.max<number | null, 'price'>('price').as('max_price'))
+   *   .select((eb) => eb.fn.max<number | null>('price').as('max_price'))
    *   .execute()
    * ```
    */
   max<
-    O extends number | string | bigint | null = any,
-    C extends StringReference<DB, TB> = StringReference<DB, TB>
+    O extends number | string | bigint | null = never,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
   >(
-    column: OutputBoundStringReference<DB, TB, C, O>
-  ): StringReferenceBoundAggregateFunctionBuilder<DB, TB, C, O>
-
-  max<O extends number | string | bigint | null = number | string | bigint>(
-    column: DynamicReferenceBuilder
-  ): AggregateFunctionBuilder<DB, TB, O>
+    expr: RE,
+  ): AggregateFunctionBuilder<
+    DB,
+    TB,
+    IsNever<O> extends true
+      ? ExtractTypeFromReferenceExpression<DB, TB, RE, number | string | bigint>
+      : O
+  >
 
   /**
    * Calls the `min` function for the column or expression given as the argument.
@@ -505,20 +579,22 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    *
    * ```ts
    * db.selectFrom('toy')
-   *   .select((eb) => eb.fn.min<number | null, 'price'>('price').as('min_price'))
+   *   .select((eb) => eb.fn.min<number | null>('price').as('min_price'))
    *   .execute()
    * ```
    */
   min<
-    O extends number | string | bigint | null = any,
-    C extends StringReference<DB, TB> = StringReference<DB, TB>
+    O extends number | string | bigint | null = never,
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
   >(
-    column: OutputBoundStringReference<DB, TB, C, O>
-  ): StringReferenceBoundAggregateFunctionBuilder<DB, TB, C, O>
-
-  min<O extends number | string | bigint | null = number | string | bigint>(
-    column: DynamicReferenceBuilder
-  ): AggregateFunctionBuilder<DB, TB, O>
+    expr: RE,
+  ): AggregateFunctionBuilder<
+    DB,
+    TB,
+    IsNever<O> extends true
+      ? ExtractTypeFromReferenceExpression<DB, TB, RE, number | string | bigint>
+      : O
+  >
 
   /**
    * Calls the `sum` function for the column or expression given as the argument.
@@ -580,9 +656,9 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    */
   sum<
     O extends number | string | bigint | null = number | string | bigint,
-    C extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>
+    RE extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
   >(
-    column: C
+    expr: RE,
   ): AggregateFunctionBuilder<DB, TB, O>
 
   /**
@@ -615,7 +691,7 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * ```
    */
   any<RE extends StringReference<DB, TB>>(
-    expr: RE
+    expr: RE,
   ): Exclude<
     ExtractTypeFromStringReference<DB, TB, RE>,
     null
@@ -624,7 +700,7 @@ export interface FunctionModule<DB, TB extends keyof DB> {
     : KyselyTypeError<'any(expr) call failed: expr must be an array'>
 
   any<T>(
-    subquery: SelectQueryBuilderExpression<Record<string, T>>
+    subquery: SelectQueryBuilderExpression<Record<string, T>>,
   ): ExpressionWrapper<DB, TB, T>
 
   any<T>(expr: Expression<ReadonlyArray<T>>): ExpressionWrapper<DB, TB, T>
@@ -652,15 +728,15 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * ```
    */
   jsonAgg<T extends (TB & string) | Expression<unknown>>(
-    table: T
+    table: T,
   ): AggregateFunctionBuilder<
     DB,
     TB,
     T extends TB
       ? Selectable<DB[T]>[]
       : T extends Expression<infer O>
-      ? O[]
-      : never
+        ? O[]
+        : never
   >
 
   /**
@@ -684,7 +760,7 @@ export interface FunctionModule<DB, TB extends keyof DB> {
    * ```
    */
   toJson<T extends (TB & string) | Expression<unknown>>(
-    table: T
+    table: T,
   ): ExpressionWrapper<
     DB,
     TB,
@@ -698,21 +774,21 @@ export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
 > {
   const fn = <T>(
     name: string,
-    args: ReadonlyArray<ReferenceExpression<DB, TB>>
+    args?: ReadonlyArray<ReferenceExpression<DB, TB>>,
   ): ExpressionWrapper<DB, TB, T> => {
     return new ExpressionWrapper(
-      FunctionNode.create(name, parseReferenceExpressionOrList(args))
+      FunctionNode.create(name, parseReferenceExpressionOrList(args ?? [])),
     )
   }
 
   const agg = <O>(
     name: string,
-    args?: ReadonlyArray<ReferenceExpression<DB, TB>>
+    args?: ReadonlyArray<ReferenceExpression<DB, TB>>,
   ): AggregateFunctionBuilder<DB, TB, O> => {
     return new AggregateFunctionBuilder({
       aggregateFunctionNode: AggregateFunctionNode.create(
         name,
-        args ? parseReferenceExpressionOrList(args) : undefined
+        args ? parseReferenceExpressionOrList(args) : undefined,
       ),
     })
   }
@@ -722,28 +798,18 @@ export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
 
     avg<
       O extends number | string | null = number | string,
-      C extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>
+      C extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
     >(column: C): AggregateFunctionBuilder<DB, TB, O> {
       return agg('avg', [column])
     },
 
-    coalesce<
-      V extends ReferenceExpression<DB, TB>,
-      OV extends ReferenceExpression<DB, TB>[]
-    >(
-      value: V,
-      ...otherValues: OV
-    ): ExpressionWrapper<
-      DB,
-      TB,
-      CoalesceReferenceExpressionList<DB, TB, [V, ...OV]>
-    > {
-      return fn('coalesce', [value, ...otherValues])
+    coalesce(...values: any[]): ExpressionWrapper<DB, TB, any> {
+      return fn('coalesce', values)
     },
 
     count<
       O extends number | string | bigint,
-      C extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>
+      C extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
     >(column: C): AggregateFunctionBuilder<DB, TB, O> {
       return agg('count', [column])
     },
@@ -752,32 +818,22 @@ export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
       return new AggregateFunctionBuilder({
         aggregateFunctionNode: AggregateFunctionNode.create(
           'count',
-          parseSelectAll(table)
+          parseSelectAll(table),
         ),
       })
     },
 
-    max<
-      C extends SimpleReferenceExpression<DB, TB> = SimpleReferenceExpression<
-        DB,
-        TB
-      >
-    >(column: C): any {
+    max(column: any): any {
       return agg('max', [column])
     },
 
-    min<
-      C extends SimpleReferenceExpression<DB, TB> = SimpleReferenceExpression<
-        DB,
-        TB
-      >
-    >(column: C): any {
+    min(column: any): any {
       return agg('min', [column])
     },
 
     sum<
       O extends number | string | bigint | null = number | string | bigint,
-      C extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>
+      C extends ReferenceExpression<DB, TB> = ReferenceExpression<DB, TB>,
     >(column: C): AggregateFunctionBuilder<DB, TB, O> {
       return agg('sum', [column])
     },
@@ -798,34 +854,8 @@ export function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<
       return new ExpressionWrapper(
         FunctionNode.create('to_json', [
           isString(table) ? parseTable(table) : table.toOperationNode(),
-        ])
+        ]),
       )
     },
   })
 }
-
-type OutputBoundStringReference<
-  DB,
-  TB extends keyof DB,
-  C extends StringReference<DB, TB>,
-  O
-> = IsAny<O> extends true
-  ? C // output not provided, unbound
-  : Equals<
-      ExtractTypeFromReferenceExpression<DB, TB, C> | null,
-      O | null
-    > extends true
-  ? C
-  : never
-
-type StringReferenceBoundAggregateFunctionBuilder<
-  DB,
-  TB extends keyof DB,
-  C extends StringReference<DB, TB>,
-  O
-> = AggregateFunctionBuilder<
-  DB,
-  TB,
-  | ExtractTypeFromReferenceExpression<DB, TB, C>
-  | (IsAny<O> extends true ? never : null extends O ? null : never) // output is nullable, but column type might not be nullable.
->

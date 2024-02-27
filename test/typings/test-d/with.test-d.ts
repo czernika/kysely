@@ -5,7 +5,7 @@ import { expectType, expectError } from 'tsd'
 async function testWith(db: Kysely<Database>) {
   const r1 = await db
     .with('jennifers', (db) =>
-      db.selectFrom('person').where('first_name', '=', 'Jennifer').selectAll()
+      db.selectFrom('person').where('first_name', '=', 'Jennifer').selectAll(),
     )
     .with('female_jennifers', (db) =>
       db
@@ -13,7 +13,7 @@ async function testWith(db: Kysely<Database>) {
         .select('first_name')
         .where('gender', '=', 'female')
         .selectAll('jennifers')
-        .select(['first_name as fn', 'last_name as ln'])
+        .select(['first_name as fn', 'last_name as ln']),
     )
     .selectFrom('female_jennifers')
     .select(['fn', 'ln'])
@@ -31,7 +31,7 @@ async function testWith(db: Kysely<Database>) {
       db
         .selectFrom('person')
         .where('first_name', '=', 'Jennifer')
-        .select(['first_name', 'last_name as ln', 'gender'])
+        .select(['first_name', 'last_name as ln', 'gender']),
     )
     .selectFrom('jennifers')
     .select(['first_name', 'ln'])
@@ -51,7 +51,7 @@ async function testWith(db: Kysely<Database>) {
         .where('first_name', '=', 'Jennifer')
         .select(['first_name', 'last_name as ln'])
         // Recursive CTE can refer to itself.
-        .union(db.selectFrom('jennifers').select(['first_name', 'ln']))
+        .union(db.selectFrom('jennifers').select(['first_name', 'ln'])),
     )
     .selectFrom('jennifers')
     .select(['first_name', 'ln'])
@@ -72,7 +72,7 @@ async function testWith(db: Kysely<Database>) {
         db
           .selectFrom('person')
           .where('first_name', '=', 'Jennifer')
-          .select(['first_name', 'last_name as ln', 'gender'])
+          .select(['first_name', 'last_name as ln', 'gender']),
     )
     .selectFrom('jennifers')
     .select(['first_name', 'ln'])
@@ -85,6 +85,47 @@ async function testWith(db: Kysely<Database>) {
     }[]
   >(r4)
 
+  // https://github.com/kysely-org/kysely/issues/785
+  const r5 = await db
+    .with('person_projection', (qb) =>
+      qb
+        .selectFrom('person')
+        .select(['first_name', 'last_name'])
+        .$if(true, (qb) => qb.where('first_name', 'is not', null)),
+    )
+    .selectFrom('person_projection')
+    .selectAll()
+    .$if(true, (qb) => qb.where('first_name', 'is not', null))
+    .execute()
+
+  expectType<
+    {
+      first_name: string
+      last_name: string | null
+    }[]
+  >(r5)
+
+  // testing fix of https://github.com/kysely-org/kysely/issues/785 didn't break $if that adds columns to the projection.
+  const r6 = await db
+    .with('person_projection', (qb) =>
+      qb
+        .selectFrom('person')
+        .select(['first_name', 'last_name'])
+        .$if(true, (qb) => qb.select('age')),
+    )
+    .selectFrom('person_projection')
+    .selectAll()
+    .$if(true, (qb) => qb.where('first_name', 'is not', null))
+    .execute()
+
+  expectType<
+    {
+      first_name: string
+      last_name: string | null
+      age: number | undefined
+    }[]
+  >(r6)
+
   // Different columns in expression and CTE name.
   expectError(
     db
@@ -92,10 +133,10 @@ async function testWith(db: Kysely<Database>) {
         db
           .selectFrom('person')
           .where('first_name', '=', 'Jennifer')
-          .select(['first_name', 'last_name'])
+          .select(['first_name', 'last_name']),
       )
       .selectFrom('jennifers')
-      .select(['first_name', 'last_name'])
+      .select(['first_name', 'last_name']),
   )
 
   // Unknown CTE name when using the CTE builder.
@@ -107,11 +148,11 @@ async function testWith(db: Kysely<Database>) {
           db
             .selectFrom('person')
             .where('first_name', '=', 'Jennifer')
-            .select(['first_name', 'last_name as ln', 'gender'])
+            .select(['first_name', 'last_name as ln', 'gender']),
       )
       .selectFrom('lollifers')
       .select(['first_name', 'ln'])
-      .execute()
+      .execute(),
   )
 }
 

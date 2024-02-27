@@ -24,6 +24,11 @@ import { CheckConstraintNode } from '../operation-node/check-constraint-node.js'
 import { parseTable } from '../parser/table-parser.js'
 import { parseOnCommitAction } from '../parser/on-commit-action-parse.js'
 import { Expression } from '../expression/expression.js'
+import {
+  UniqueConstraintNodeBuilder,
+  UniqueConstraintNodeBuilderCallback,
+} from './unique-constraint-builder.js'
+import { parseExpression } from '../parser/expression-parser.js'
 
 /**
  * This builder can be used to create a `create table` query.
@@ -103,7 +108,7 @@ export class CreateTableBuilder<TB extends string, C extends string = never>
    * ```
    *
    * With this method, it's once again good to remember that Kysely just builds the
-   * query and doesn't provide the same API for all databses. For example, some
+   * query and doesn't provide the same API for all databases. For example, some
    * databases like older MySQL don't support the `references` statement in the
    * column definition. Instead foreign key constraints need to be defined in the
    * `create table` query. See the next example:
@@ -129,22 +134,22 @@ export class CreateTableBuilder<TB extends string, C extends string = never>
   addColumn<CN extends string>(
     columnName: CN,
     dataType: DataTypeExpression,
-    build: ColumnBuilderCallback = noop
+    build: ColumnBuilderCallback = noop,
   ): CreateTableBuilder<TB, C | CN> {
     const columnBuilder = build(
       new ColumnDefinitionBuilder(
         ColumnDefinitionNode.create(
           columnName,
-          parseDataTypeExpression(dataType)
-        )
-      )
+          parseDataTypeExpression(dataType),
+        ),
+      ),
     )
 
     return new CreateTableBuilder({
       ...this.#props,
       node: CreateTableNode.cloneWithColumn(
         this.#props.node,
-        columnBuilder.toOperationNode()
+        columnBuilder.toOperationNode(),
       ),
     })
   }
@@ -163,13 +168,13 @@ export class CreateTableBuilder<TB extends string, C extends string = never>
    */
   addPrimaryKeyConstraint(
     constraintName: string,
-    columns: C[]
+    columns: C[],
   ): CreateTableBuilder<TB, C> {
     return new CreateTableBuilder({
       ...this.#props,
       node: CreateTableNode.cloneWithConstraint(
         this.#props.node,
-        PrimaryConstraintNode.create(columns, constraintName)
+        PrimaryConstraintNode.create(columns, constraintName),
       ),
     })
   }
@@ -185,16 +190,28 @@ export class CreateTableBuilder<TB extends string, C extends string = never>
    * ```ts
    * addUniqueConstraint('first_name_last_name_unique', ['first_name', 'last_name'])
    * ```
+   *
+   * In dialects such as PostgreSQL you can specify `nulls not distinct` as follows:
+   * ```ts
+   * addUniqueConstraint('first_name_last_name_unique', ['first_name', 'last_name'], (builder) => builder.nullsNotDistinct())
+   * ```
    */
   addUniqueConstraint(
     constraintName: string,
-    columns: C[]
+    columns: C[],
+    build: UniqueConstraintNodeBuilderCallback = noop,
   ): CreateTableBuilder<TB, C> {
+    const uniqueConstraintBuilder = build(
+      new UniqueConstraintNodeBuilder(
+        UniqueConstraintNode.create(columns, constraintName),
+      ),
+    )
+
     return new CreateTableBuilder({
       ...this.#props,
       node: CreateTableNode.cloneWithConstraint(
         this.#props.node,
-        UniqueConstraintNode.create(columns, constraintName)
+        uniqueConstraintBuilder.toOperationNode(),
       ),
     })
   }
@@ -215,7 +232,7 @@ export class CreateTableBuilder<TB extends string, C extends string = never>
    */
   addCheckConstraint(
     constraintName: string,
-    checkExpression: Expression<any>
+    checkExpression: Expression<any>,
   ): CreateTableBuilder<TB, C> {
     return new CreateTableBuilder({
       ...this.#props,
@@ -223,8 +240,8 @@ export class CreateTableBuilder<TB extends string, C extends string = never>
         this.#props.node,
         CheckConstraintNode.create(
           checkExpression.toOperationNode(),
-          constraintName
-        )
+          constraintName,
+        ),
       ),
     })
   }
@@ -263,7 +280,7 @@ export class CreateTableBuilder<TB extends string, C extends string = never>
     columns: C[],
     targetTable: string,
     targetColumns: string[],
-    build: ForeignKeyConstraintBuilderCallback = noop
+    build: ForeignKeyConstraintBuilderCallback = noop,
   ): CreateTableBuilder<TB, C> {
     const builder = build(
       new ForeignKeyConstraintBuilder(
@@ -271,16 +288,16 @@ export class CreateTableBuilder<TB extends string, C extends string = never>
           columns.map(ColumnNode.create),
           parseTable(targetTable),
           targetColumns.map(ColumnNode.create),
-          constraintName
-        )
-      )
+          constraintName,
+        ),
+      ),
     )
 
     return new CreateTableBuilder({
       ...this.#props,
       node: CreateTableNode.cloneWithConstraint(
         this.#props.node,
-        builder.toOperationNode()
+        builder.toOperationNode(),
       ),
     })
   }
@@ -316,7 +333,7 @@ export class CreateTableBuilder<TB extends string, C extends string = never>
       ...this.#props,
       node: CreateTableNode.cloneWithFrontModifier(
         this.#props.node,
-        modifier.toOperationNode()
+        modifier.toOperationNode(),
       ),
     })
   }
@@ -352,8 +369,36 @@ export class CreateTableBuilder<TB extends string, C extends string = never>
       ...this.#props,
       node: CreateTableNode.cloneWithEndModifier(
         this.#props.node,
-        modifier.toOperationNode()
+        modifier.toOperationNode(),
       ),
+    })
+  }
+
+  /**
+   * Allows to create table from `select` query.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * db.schema.createTable('copy')
+   *   .temporary()
+   *   .as(db.selectFrom('person').select(['first_name', 'last_name']))
+   *   .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * create temporary table "copy" as
+   * select "first_name", "last_name" from "person"
+   * ```
+   */
+  as(expression: Expression<unknown>) {
+    return new CreateTableBuilder({
+      ...this.#props,
+      node: CreateTableNode.cloneWith(this.#props.node, {
+        selectQuery: parseExpression(expression),
+      }),
     })
   }
 
@@ -396,14 +441,14 @@ export class CreateTableBuilder<TB extends string, C extends string = never>
   toOperationNode(): CreateTableNode {
     return this.#props.executor.transformQuery(
       this.#props.node,
-      this.#props.queryId
+      this.#props.queryId,
     )
   }
 
   compile(): CompiledQuery {
     return this.#props.executor.compileQuery(
       this.toOperationNode(),
-      this.#props.queryId
+      this.#props.queryId,
     )
   }
 
@@ -414,7 +459,7 @@ export class CreateTableBuilder<TB extends string, C extends string = never>
 
 preventAwait(
   CreateTableBuilder,
-  "don't await CreateTableBuilder instances directly. To execute the query you need to call `execute`"
+  "don't await CreateTableBuilder instances directly. To execute the query you need to call `execute`",
 )
 
 export interface CreateTableBuilderProps {
@@ -424,9 +469,9 @@ export interface CreateTableBuilderProps {
 }
 
 export type ColumnBuilderCallback = (
-  builder: ColumnDefinitionBuilder
+  builder: ColumnDefinitionBuilder,
 ) => ColumnDefinitionBuilder
 
 export type ForeignKeyConstraintBuilderCallback = (
-  builder: ForeignKeyConstraintBuilder
+  builder: ForeignKeyConstraintBuilder,
 ) => ForeignKeyConstraintBuilder

@@ -282,7 +282,7 @@ for (const dialect of DIALECTS) {
             .selectFrom('pet')
             .whereRef('person.id', '=', 'pet.owner_id')
             .select('name')
-            .as('pet_name')
+            .as('pet_name'),
         )
         .where('first_name', '=', 'Jennifer')
 
@@ -317,7 +317,7 @@ for (const dialect of DIALECTS) {
         .select((eb) =>
           eb.fn
             .count(eb.case().when('first_name', '=', 'Jennifer').then(1).end())
-            .as('num_jennifers')
+            .as('num_jennifers'),
         )
 
       testSql(query, dialect, {
@@ -360,9 +360,9 @@ for (const dialect of DIALECTS) {
                 .when('first_name', '=', 'Jennifer')
                 .then(sql.lit(1))
                 .else(sql.lit(0))
-                .end()
+                .end(),
             )
-            .as('num_jennifers')
+            .as('num_jennifers'),
         )
 
       testSql(query, dialect, {
@@ -400,10 +400,10 @@ for (const dialect of DIALECTS) {
           .selectFrom('person')
           .select(
             sql`concat(${sql.ref(
-              'first_name'
+              'first_name',
             )}, ' ', cast(${'Muriel'} as varchar), ' ', ${sql.ref(
-              'last_name'
-            )})`.as('full_name_with_middle_name')
+              'last_name',
+            )})`.as('full_name_with_middle_name'),
           )
           .where('first_name', '=', 'Jennifer')
 
@@ -645,6 +645,32 @@ for (const dialect of DIALECTS) {
         expect(persons).to.eql([{ last_name: 'Aniston' }])
       })
 
+      it('should select a row for update of', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .select('last_name')
+          .where('first_name', '=', 'Jennifer')
+          .forUpdate('person')
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select "last_name" from "person" where "first_name" = $1 for update of "person"',
+            parameters: ['Jennifer'],
+          },
+          mysql: {
+            sql: 'select `last_name` from `person` where `first_name` = ? for update of `person`',
+            parameters: ['Jennifer'],
+          },
+          mssql: NOT_SUPPORTED,
+          sqlite: NOT_SUPPORTED,
+        })
+
+        const persons = await query.execute()
+
+        expect(persons).to.have.length(1)
+        expect(persons).to.eql([{ last_name: 'Aniston' }])
+      })
+
       it('should select a row for update with skip locked', async () => {
         const query = ctx.db
           .selectFrom('person')
@@ -660,6 +686,33 @@ for (const dialect of DIALECTS) {
           },
           mysql: {
             sql: 'select `last_name` from `person` where `first_name` = ? for update skip locked',
+            parameters: ['Jennifer'],
+          },
+          mssql: NOT_SUPPORTED,
+          sqlite: NOT_SUPPORTED,
+        })
+
+        const persons = await query.execute()
+
+        expect(persons).to.have.length(1)
+        expect(persons).to.eql([{ last_name: 'Aniston' }])
+      })
+
+      it('should select a row for update of with skip locked', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .select('last_name')
+          .where('first_name', '=', 'Jennifer')
+          .forUpdate(['person'])
+          .skipLocked()
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select "last_name" from "person" where "first_name" = $1 for update of "person" skip locked',
+            parameters: ['Jennifer'],
+          },
+          mysql: {
+            sql: 'select `last_name` from `person` where `first_name` = ? for update of `person` skip locked',
             parameters: ['Jennifer'],
           },
           mssql: NOT_SUPPORTED,
@@ -819,6 +872,36 @@ for (const dialect of DIALECTS) {
       expect(max_first_name).to.equal('Sylvester')
     })
 
+    it('should use a cast in a select call', async () => {
+      const query = ctx.db
+        .selectFrom('toy')
+        .select((eb) => [
+          eb.cast<number>('price', 'double precision').as('price'),
+        ])
+
+      testSql(query, dialect, {
+        postgres: {
+          sql: 'select cast("price" as double precision) as "price" from "toy"',
+          parameters: [],
+        },
+        mysql: {
+          sql: 'select cast(`price` as double precision) as `price` from `toy`',
+          parameters: [],
+        },
+        mssql: {
+          sql: 'select cast("price" as double precision) as "price" from "toy"',
+          parameters: [],
+        },
+        sqlite: {
+          sql: 'select cast("price" as double precision) as "price" from "toy"',
+          parameters: [],
+        },
+      })
+
+      const { price } = await query.executeTakeFirstOrThrow()
+      expect(price).to.equal(10)
+    })
+
     it('modifyFront should add arbitrary SQL to the front of the query', async () => {
       const query = ctx.db
         .selectFrom('person')
@@ -879,8 +962,37 @@ for (const dialect of DIALECTS) {
       })
     }
 
-    if (dialect === 'postgres' || dialect === 'mysql' || dialect === 'mssql') {
-      it('should stream results', async () => {
+    it('should stream results', async () => {
+      const males: unknown[] = []
+
+      const stream = ctx.db
+        .selectFrom('person')
+        .select(['first_name', 'last_name', 'gender'])
+        .where('gender', '=', 'male')
+        .orderBy('first_name')
+        .stream()
+
+      for await (const male of stream) {
+        males.push(male)
+      }
+
+      expect(males).to.have.length(2)
+      expect(males).to.eql([
+        {
+          first_name: 'Arnold',
+          last_name: 'Schwarzenegger',
+          gender: 'male',
+        },
+        {
+          first_name: 'Sylvester',
+          last_name: 'Stallone',
+          gender: 'male',
+        },
+      ])
+    })
+
+    if (dialect === 'postgres' || dialect === 'mssql') {
+      it('should stream results with a specific chunk size', async () => {
         const males: unknown[] = []
 
         const stream = ctx.db
@@ -888,7 +1000,7 @@ for (const dialect of DIALECTS) {
           .select(['first_name', 'last_name', 'gender'])
           .where('gender', '=', 'male')
           .orderBy('first_name')
-          .stream()
+          .stream(1)
 
         for await (const male of stream) {
           males.push(male)
@@ -908,85 +1020,54 @@ for (const dialect of DIALECTS) {
           },
         ])
       })
-
-      if (dialect === 'postgres' || dialect === 'mssql') {
-        it('should stream results with a specific chunk size', async () => {
-          const males: unknown[] = []
-
-          const stream = ctx.db
-            .selectFrom('person')
-            .select(['first_name', 'last_name', 'gender'])
-            .where('gender', '=', 'male')
-            .orderBy('first_name')
-            .stream(1)
-
-          for await (const male of stream) {
-            males.push(male)
-          }
-
-          expect(males).to.have.length(2)
-          expect(males).to.eql([
-            {
-              first_name: 'Arnold',
-              last_name: 'Schwarzenegger',
-              gender: 'male',
-            },
-            {
-              first_name: 'Sylvester',
-              last_name: 'Stallone',
-              gender: 'male',
-            },
-          ])
-        })
-      }
-
-      it('should release connection on premature async iterator stop', async () => {
-        for (let i = 0; i <= POOL_SIZE + 1; i++) {
-          const stream = ctx.db.selectFrom('person').selectAll().stream()
-
-          for await (const _ of stream) {
-            break
-          }
-        }
-      })
-
-      it('should release connection on premature async iterator stop when using a specific chunk size', async () => {
-        for (let i = 0; i <= POOL_SIZE + 1; i++) {
-          const stream = ctx.db.selectFrom('person').selectAll().stream(1)
-
-          for await (const _ of stream) {
-            break
-          }
-        }
-      })
-
-      if (dialect === 'postgres') {
-        it('should throw an error if the cursor implementation is not provided for the postgres dialect', async () => {
-          const db = new Kysely<Database>({
-            dialect: new PostgresDialect({
-              pool: async () => new Pool(DIALECT_CONFIGS.postgres),
-            }),
-            plugins: PLUGINS,
-          })
-
-          await expect(
-            (async () => {
-              for await (const _ of db
-                .selectFrom('person')
-                .selectAll()
-                .stream()) {
-              }
-            })()
-          ).to.be.rejectedWith(
-            "'cursor' is not present in your postgres dialect config. It's required to make streaming work in postgres."
-          )
-
-          await db.destroy()
-        })
-      }
     }
 
-    if (dialect !== 'mssql') {
+    it('should release connection on premature async iterator stop', async () => {
+      for (let i = 0; i <= POOL_SIZE + 1; i++) {
+        const stream = ctx.db.selectFrom('person').selectAll().stream()
+
+        for await (const _ of stream) {
+          break
+        }
+      }
+    })
+
+    it('should release connection on premature async iterator stop when using a specific chunk size', async () => {
+      for (let i = 0; i <= POOL_SIZE + 1; i++) {
+        const stream = ctx.db.selectFrom('person').selectAll().stream(1)
+
+        for await (const _ of stream) {
+          break
+        }
+      }
+    })
+
+    if (dialect === 'postgres') {
+      it('should throw an error if the cursor implementation is not provided for the postgres dialect', async () => {
+        const db = new Kysely<Database>({
+          dialect: new PostgresDialect({
+            pool: async () => new Pool(DIALECT_CONFIGS.postgres),
+          }),
+          plugins: PLUGINS,
+        })
+
+        await expect(
+          (async () => {
+            for await (const _ of db
+              .selectFrom('person')
+              .selectAll()
+              .stream()) {
+            }
+          })(),
+        ).to.be.rejectedWith(
+          "'cursor' is not present in your postgres dialect config. It's required to make streaming work in postgres.",
+        )
+
+        await db.destroy()
+      })
+    }
+
+    if (dialect === 'postgres' || dialect === 'mysql' || dialect === 'sqlite') {
       it('should create a select query with limit and offset', async () => {
         const query = ctx.db
           .selectFrom('person')
@@ -1013,11 +1094,37 @@ for (const dialect of DIALECTS) {
         const result = await query.execute()
         expect(result).to.have.length(2)
       })
+
+      it('should create a select query with limit and offset expressions', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .select('first_name')
+          .limit((eb) => eb.lit(2))
+          .offset((eb) => eb.lit(1))
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: `select "first_name" from "person" limit 2 offset 1`,
+            parameters: [],
+          },
+          mysql: {
+            sql: 'select `first_name` from `person` limit 2 offset 1',
+            parameters: [],
+          },
+          mssql: NOT_SUPPORTED,
+          sqlite: {
+            sql: 'select "first_name" from "person" limit 2 offset 1',
+            parameters: [],
+          },
+        })
+
+        const result = await query.execute()
+        expect(result).to.have.length(2)
+      })
     }
 
     it('should create a select statement without a `from` clause', async () => {
       const query = ctx.db.selectNoFrom((eb) => [
-        eb.selectNoFrom(eb.lit(1).as('one')).as('one'),
         eb
           .selectFrom('person')
           .select('first_name')
@@ -1028,19 +1135,19 @@ for (const dialect of DIALECTS) {
 
       testSql(query, dialect, {
         postgres: {
-          sql: `select (select 1 as "one") as "one", (select "first_name" from "person" order by "first_name" limit $1) as "person_first_name"`,
+          sql: `select (select "first_name" from "person" order by "first_name" limit $1) as "person_first_name"`,
           parameters: [1],
         },
         mysql: {
-          sql: 'select (select 1 as `one`) as `one`, (select `first_name` from `person` order by `first_name` limit ?) as `person_first_name`',
+          sql: 'select (select `first_name` from `person` order by `first_name` limit ?) as `person_first_name`',
           parameters: [1],
         },
         mssql: {
-          sql: `select (select 1 as "one") as "one", (select top 1 "first_name" from "person" order by "first_name") as "person_first_name"`,
+          sql: `select (select top(1) "first_name" from "person" order by "first_name") as "person_first_name"`,
           parameters: [],
         },
         sqlite: {
-          sql: 'select (select 1 as "one") as "one", (select "first_name" from "person" order by "first_name" limit ?) as "person_first_name"',
+          sql: 'select (select "first_name" from "person" order by "first_name" limit ?) as "person_first_name"',
           parameters: [1],
         },
       })
@@ -1050,10 +1157,182 @@ for (const dialect of DIALECTS) {
 
       if (dialect === 'mysql') {
         // For some weird reason, MySQL returns `one` as a string.
-        expect(result[0]).to.eql({ one: '1', person_first_name: 'Arnold' })
+        expect(result[0]).to.eql({ person_first_name: 'Arnold' })
       } else {
-        expect(result[0]).to.eql({ one: 1, person_first_name: 'Arnold' })
+        expect(result[0]).to.eql({ person_first_name: 'Arnold' })
       }
     })
+
+    if (dialect === 'postgres' || dialect === 'mssql') {
+      it('should create a select query with order by, offset and fetch', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .select('first_name')
+          .orderBy('first_name')
+          .offset(1)
+          .fetch(2)
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select "first_name" from "person" order by "first_name" offset $1 fetch next $2 rows only',
+            parameters: [1, 2],
+          },
+          mysql: NOT_SUPPORTED,
+          mssql: {
+            sql: 'select "first_name" from "person" order by "first_name" offset @1 rows fetch next @2 rows only',
+            parameters: [1, 2],
+          },
+          sqlite: NOT_SUPPORTED,
+        })
+
+        const result = await query.execute()
+        expect(result).to.have.length(2)
+      })
+
+      it('should create a select query with order by, offset and fetch only', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .select('first_name')
+          .orderBy('first_name')
+          .offset(1)
+          .fetch(2, 'only')
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select "first_name" from "person" order by "first_name" offset $1 fetch next $2 rows only',
+            parameters: [1, 2],
+          },
+          mysql: NOT_SUPPORTED,
+          mssql: {
+            sql: 'select "first_name" from "person" order by "first_name" offset @1 rows fetch next @2 rows only',
+            parameters: [1, 2],
+          },
+          sqlite: NOT_SUPPORTED,
+        })
+
+        const result = await query.execute()
+        expect(result).to.have.length(2)
+      })
+    }
+
+    if (dialect === 'postgres') {
+      it('should create a select query with order by, offset and fetch with ties', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .select('first_name')
+          .orderBy('first_name')
+          .offset(1)
+          .fetch(2, 'with ties')
+
+        testSql(query, dialect, {
+          postgres: {
+            sql: 'select "first_name" from "person" order by "first_name" offset $1 fetch next $2 rows with ties',
+            parameters: [1, 2],
+          },
+          mysql: NOT_SUPPORTED,
+          mssql: NOT_SUPPORTED,
+          sqlite: NOT_SUPPORTED,
+        })
+
+        await query.execute()
+      })
+    }
+
+    if (dialect === 'mssql') {
+      it('should create a select query with top', async () => {
+        const query = ctx.db.selectFrom('person').select('first_name').top(2)
+
+        testSql(query, dialect, {
+          postgres: NOT_SUPPORTED,
+          mysql: NOT_SUPPORTED,
+          mssql: {
+            sql: 'select top(2) "first_name" from "person"',
+            parameters: [],
+          },
+          sqlite: NOT_SUPPORTED,
+        })
+
+        await query.execute()
+      })
+
+      it('should create a select query with top and order by', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .select('first_name')
+          .top(2)
+          .orderBy('first_name')
+
+        testSql(query, dialect, {
+          postgres: NOT_SUPPORTED,
+          mysql: NOT_SUPPORTED,
+          mssql: {
+            sql: 'select top(2) "first_name" from "person" order by "first_name"',
+            parameters: [],
+          },
+          sqlite: NOT_SUPPORTED,
+        })
+
+        await query.execute()
+      })
+
+      it('should create a select query with top percent', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .select('first_name')
+          .top(50, 'percent')
+
+        testSql(query, dialect, {
+          postgres: NOT_SUPPORTED,
+          mysql: NOT_SUPPORTED,
+          mssql: {
+            sql: 'select top(50) percent "first_name" from "person"',
+            parameters: [],
+          },
+          sqlite: NOT_SUPPORTED,
+        })
+
+        await query.execute()
+      })
+
+      it('should create a select query with top with ties', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .select('first_name')
+          .top(2, 'with ties')
+          .orderBy('first_name')
+
+        testSql(query, dialect, {
+          postgres: NOT_SUPPORTED,
+          mysql: NOT_SUPPORTED,
+          mssql: {
+            sql: 'select top(2) with ties "first_name" from "person" order by "first_name"',
+            parameters: [],
+          },
+          sqlite: NOT_SUPPORTED,
+        })
+
+        await query.execute()
+      })
+
+      it('should create a select query with top percent with ties', async () => {
+        const query = ctx.db
+          .selectFrom('person')
+          .select('first_name')
+          .top(50, 'percent with ties')
+          .orderBy('first_name')
+
+        testSql(query, dialect, {
+          postgres: NOT_SUPPORTED,
+          mysql: NOT_SUPPORTED,
+          mssql: {
+            sql: 'select top(50) percent with ties "first_name" from "person" order by "first_name"',
+            parameters: [],
+          },
+          sqlite: NOT_SUPPORTED,
+        })
+
+        await query.execute()
+      })
+    }
   })
 }

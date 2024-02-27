@@ -1,4 +1,12 @@
-import { Expression, Kysely, RawBuilder, Selectable, Simplify, sql } from '..'
+import {
+  Expression,
+  Kysely,
+  NotNull,
+  RawBuilder,
+  Selectable,
+  Simplify,
+  sql,
+} from '..'
 import { Database, Person } from '../shared'
 import { expectType, expectError } from 'tsd'
 
@@ -45,7 +53,7 @@ async function testSelectSingle(db: Kysely<Database>) {
         .selectFrom('movie')
         .whereRef('movie.id', '=', 'person.id')
         .select('movie.id')
-        .as('movie_id')
+        .as('movie_id'),
     )
     .execute()
   expectType<{ movie_id: string | null }>(r7)
@@ -106,7 +114,24 @@ async function testSelectSingle(db: Kysely<Database>) {
     .$narrowType<NarrowTarget>()
     .execute()
 
-  expectType<NarrowTarget>(r15)
+  // Narrow not null
+  const [r16] = await db
+    .selectFrom('action')
+    .select(['callback_url', 'queue_id'])
+    .$narrowType<{ callback_url: NotNull }>()
+    .execute()
+
+  expectType<string>(r16.callback_url)
+  expectType<string | null>(r16.queue_id)
+
+  const [r17] = await db
+    .selectFrom('action')
+    .select(['callback_url', 'queue_id'])
+    .$narrowType<{ callback_url: NotNull; queue_id: NotNull }>()
+    .execute()
+
+  expectType<string>(r17.callback_url)
+  expectType<string>(r17.queue_id)
 }
 
 async function testSelectAll(db: Kysely<Database>) {
@@ -132,6 +157,7 @@ async function testSelectAll(db: Kysely<Database>) {
     modified_at: Date
     owner_id: number
     species: 'dog' | 'cat'
+    deleted_at: Date | null
   }>(r2)
 
   // Select all from a single table when there are two tables to select from
@@ -171,6 +197,7 @@ async function testSelectAll(db: Kysely<Database>) {
     modified_at: Date
     owner_id: number
     species: 'dog' | 'cat'
+    deleted_at: Date | null
   }>(r5)
 }
 
@@ -360,7 +387,7 @@ async function testManyNestedSubqueries(db: Kysely<Database>) {
                                               .whereRef(
                                                 'pet4.owner_id',
                                                 '=',
-                                                'p4.id'
+                                                'p4.id',
                                               )
                                               .select((eb8) => [
                                                 'pet4.id',
@@ -370,23 +397,23 @@ async function testManyNestedSubqueries(db: Kysely<Database>) {
                                                     .whereRef(
                                                       'p5.id',
                                                       '=',
-                                                      'pet4.owner_id'
+                                                      'pet4.owner_id',
                                                     )
-                                                    .select('p5.id')
+                                                    .select('p5.id'),
                                                 ).as('owner'),
-                                              ])
+                                              ]),
                                           ).as('pets'),
-                                        ])
+                                        ]),
                                     ).as('owner'),
-                                  ])
+                                  ]),
                               ).as('pets'),
-                            ])
+                            ]),
                         ).as('owner'),
-                      ])
+                      ]),
                   ).as('pets'),
-                ])
+                ]),
             ).as('owner'),
-          ])
+          ]),
       ).as('pets'),
     ])
     .executeTakeFirstOrThrow()
@@ -419,13 +446,13 @@ async function testManyNestedSubqueries(db: Kysely<Database>) {
 }
 
 export function jsonArrayFrom<O>(
-  expr: Expression<O>
+  expr: Expression<O>,
 ): RawBuilder<Simplify<O>[]> {
   return sql`(select coalesce(json_agg(agg), '[]') from ${expr} as agg)`
 }
 
 export function jsonObjectFrom<O>(
-  expr: Expression<O>
+  expr: Expression<O>,
 ): RawBuilder<Simplify<O> | null> {
   return sql`(select to_json(obj) from ${expr} as obj)`
 }

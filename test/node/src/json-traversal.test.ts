@@ -40,14 +40,14 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
     })
 
     if (dialect === 'mysql' || dialect === 'sqlite') {
-      describe('JSON Path syntax ($)', () => {
+      describe('JSON reference using JSON Path syntax ($)', () => {
         const jsonOperator = dialect === 'mysql' ? '->$' : '->>$'
 
         it(`should execute a query with column${jsonOperator}.key in select clause`, async () => {
           const query = ctx.db
             .selectFrom('person_metadata')
             .select((eb) =>
-              eb.ref('website', jsonOperator).key('url').as('website_url')
+              eb.ref('website', jsonOperator).key('url').as('website_url'),
             )
 
           testSql(query, dialect, {
@@ -76,7 +76,7 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
           const query = ctx.db
             .selectFrom('person_metadata')
             .select((eb) =>
-              eb.ref('nicknames', jsonOperator).at(0).as('nickname')
+              eb.ref('nicknames', jsonOperator).at(0).as('nickname'),
             )
 
           testSql(query, dialect, {
@@ -109,7 +109,7 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
                 .ref('profile', jsonOperator)
                 .key('auth')
                 .key('roles')
-                .as('roles')
+                .as('roles'),
             )
 
           testSql(query, dialect, {
@@ -138,7 +138,7 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
           const query = ctx.db
             .selectFrom('person_metadata')
             .select((eb) =>
-              eb.ref('profile', jsonOperator).key('tags').at(0).as('main_tag')
+              eb.ref('profile', jsonOperator).key('tags').at(0).as('main_tag'),
             )
 
           testSql(query, dialect, {
@@ -171,7 +171,7 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
                 .ref('experience', jsonOperator)
                 .at(0)
                 .key('establishment')
-                .as('establishment')
+                .as('establishment'),
             )
 
           testSql(query, dialect, {
@@ -204,7 +204,7 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
                 .ref('schedule', jsonOperator)
                 .at(0)
                 .at(0)
-                .as('january_1st_schedule')
+                .as('january_1st_schedule'),
             )
 
           testSql(query, dialect, {
@@ -234,7 +234,7 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
             const query = ctx.db
               .selectFrom('person_metadata')
               .select((eb) =>
-                eb.ref('nicknames', '->$').at('last').as('nickname')
+                eb.ref('nicknames', '->$').at('last').as('nickname'),
               )
 
             testSql(query, dialect, {
@@ -262,7 +262,7 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
             const query = ctx.db
               .selectFrom('person_metadata')
               .select((eb) =>
-                eb.ref('nicknames', '->>$').at('#-1').as('nickname')
+                eb.ref('nicknames', '->>$').at('#-1').as('nickname'),
               )
 
             testSql(query, dialect, {
@@ -319,11 +319,11 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
           const query = ctx.db
             .selectFrom('person_metadata')
             .where((eb) =>
-              eb.cmpr(
+              eb(
                 eb.ref('profile', jsonOperator).key('auth').key('login_count'),
                 '=',
-                12
-              )
+                12,
+              ),
             )
             .selectAll()
 
@@ -352,7 +352,7 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
             .orderBy(
               (eb) =>
                 eb.ref('profile', jsonOperator).key('auth').key('login_count'),
-              'desc'
+              'desc',
             )
             .selectAll()
 
@@ -377,17 +377,49 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
           expect(results[2].profile.auth.login_count).to.equal(12)
         })
       })
+
+      describe('Standalone JSON path syntax ($)', () => {
+        it('should execute a query with json_set function', async () => {
+          const lastItem = dialect === 'mysql' ? 'last' : '#-1'
+
+          const query = ctx.db
+            .updateTable('person_metadata')
+            .set('experience', (eb) =>
+              eb.fn('json_set', [
+                'experience',
+                eb.jsonPath<'experience'>().at(lastItem).key('establishment'),
+                eb.val('Papa Johns'),
+              ]),
+            )
+            .where('person_id', '=', 911)
+
+          testSql(query, dialect, {
+            postgres: NOT_SUPPORTED,
+            mysql: {
+              parameters: ['Papa Johns', 911],
+              sql: "update `person_metadata` set `experience` = json_set(`experience`, '$[last].establishment', ?) where `person_id` = ?",
+            },
+            mssql: NOT_SUPPORTED,
+            sqlite: {
+              parameters: ['Papa Johns', 911],
+              sql: `update "person_metadata" set "experience" = json_set("experience", '$[#-1].establishment', ?) where "person_id" = ?`,
+            },
+          })
+
+          await query.execute()
+        })
+      })
     }
 
     if (dialect === 'postgres' || dialect === 'sqlite') {
-      describe('PostgreSQL-style syntax (->->->>)', () => {
+      describe('JSON reference using PostgreSQL-style syntax (->->->>)', () => {
         const jsonOperator = dialect === 'postgres' ? '->' : '->>'
 
         it(`should execute a query with column${jsonOperator}key in select clause`, async () => {
           const query = ctx.db
             .selectFrom('person_metadata')
             .select((eb) =>
-              eb.ref('website', jsonOperator).key('url').as('website_url')
+              eb.ref('website', jsonOperator).key('url').as('website_url'),
             )
 
           testSql(query, dialect, {
@@ -416,7 +448,7 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
           const query = ctx.db
             .selectFrom('person_metadata')
             .select((eb) =>
-              eb.ref('nicknames', jsonOperator).at(0).as('nickname')
+              eb.ref('nicknames', jsonOperator).at(0).as('nickname'),
             )
 
           testSql(query, dialect, {
@@ -449,7 +481,7 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
                 .ref('profile', jsonOperator)
                 .key('auth')
                 .key('roles')
-                .as('roles')
+                .as('roles'),
             )
 
           testSql(query, dialect, {
@@ -478,7 +510,7 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
           const query = ctx.db
             .selectFrom('person_metadata')
             .select((eb) =>
-              eb.ref('profile', jsonOperator).key('tags').at(0).as('main_tag')
+              eb.ref('profile', jsonOperator).key('tags').at(0).as('main_tag'),
             )
 
           testSql(query, dialect, {
@@ -511,7 +543,7 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
                 .ref('experience', jsonOperator)
                 .at(0)
                 .key('establishment')
-                .as('establishment')
+                .as('establishment'),
             )
 
           testSql(query, dialect, {
@@ -544,7 +576,7 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
                 .ref('schedule', jsonOperator)
                 .at(0)
                 .at(0)
-                .as('january_1st_schedule')
+                .as('january_1st_schedule'),
             )
 
           testSql(query, dialect, {
@@ -629,11 +661,11 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
           const query = ctx.db
             .selectFrom('person_metadata')
             .where((eb) =>
-              eb.cmpr(
+              eb(
                 eb.ref('profile', jsonOperator).key('auth').key('login_count'),
                 '=',
-                12
-              )
+                12,
+              ),
             )
             .selectAll()
 
@@ -662,7 +694,7 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
             .orderBy(
               (eb) =>
                 eb.ref('profile', jsonOperator).key('auth').key('login_count'),
-              'desc'
+              'desc',
             )
             .selectAll()
 
@@ -693,7 +725,7 @@ for (const dialect of DIALECTS.filter((dialect) => dialect !== 'mssql')) {
 
 async function initJSONTest<D extends BuiltInDialect>(
   ctx: Mocha.Context,
-  dialect: D
+  dialect: D,
 ) {
   const testContext = await initTest(ctx, dialect)
 
@@ -731,7 +763,7 @@ async function initJSONTest<D extends BuiltInDialect>(
   await db.schema
     .createTable('person_metadata')
     .addColumn('person_id', 'integer', (cb) =>
-      cb.primaryKey().references('person.id')
+      cb.primaryKey().references('person.id'),
     )
     .addColumn('website', jsonColumnDataType, notNull)
     .addColumn('nicknames', jsonColumnDataType, notNull)
@@ -797,7 +829,7 @@ async function insertDefaultJSONDataSet(ctx: TestContext) {
             },
           ]),
           schedule: JSON.stringify([[[{ name: 'Gym', time: '12:15' }]]]),
-        }))
+        })),
     )
     .execute()
 }

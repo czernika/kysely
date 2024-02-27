@@ -1,11 +1,9 @@
 import { freeze } from '../util/object-utils.js'
 import { CheckConstraintNode } from './check-constraint-node.js'
 import { ColumnNode } from './column-node.js'
-import { DataTypeNode } from './data-type-node.js'
 import { DefaultValueNode } from './default-value-node.js'
 import { GeneratedNode } from './generated-node.js'
 import { OperationNode } from './operation-node.js'
-import { RawNode } from './raw-node.js'
 import { ReferencesNode } from './references-node.js'
 
 export type ColumnDefinitionNodeProps = Omit<
@@ -28,6 +26,8 @@ export interface ColumnDefinitionNode extends OperationNode {
   readonly unsigned?: boolean
   readonly frontModifiers?: ReadonlyArray<OperationNode>
   readonly endModifiers?: ReadonlyArray<OperationNode>
+  readonly nullsNotDistinct?: boolean
+  readonly identity?: boolean
 }
 
 /**
@@ -48,7 +48,7 @@ export const ColumnDefinitionNode = freeze({
 
   cloneWithFrontModifier(
     node: ColumnDefinitionNode,
-    modifier: OperationNode
+    modifier: OperationNode,
   ): ColumnDefinitionNode {
     return freeze({
       ...node,
@@ -60,7 +60,7 @@ export const ColumnDefinitionNode = freeze({
 
   cloneWithEndModifier(
     node: ColumnDefinitionNode,
-    modifier: OperationNode
+    modifier: OperationNode,
   ): ColumnDefinitionNode {
     return freeze({
       ...node,
@@ -72,7 +72,7 @@ export const ColumnDefinitionNode = freeze({
 
   cloneWith(
     node: ColumnDefinitionNode,
-    props: ColumnDefinitionNodeProps
+    props: ColumnDefinitionNodeProps,
   ): ColumnDefinitionNode {
     return freeze({
       ...node,

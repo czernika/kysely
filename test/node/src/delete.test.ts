@@ -11,6 +11,7 @@ import {
   insertDefaultDataSet,
   DEFAULT_DATA_SET,
   DIALECTS,
+  Species,
 } from './test-setup.js'
 
 for (const dialect of DIALECTS) {
@@ -66,7 +67,7 @@ for (const dialect of DIALECTS) {
           .select(['first_name', 'last_name', 'gender'])
           .orderBy('first_name')
           .orderBy('last_name')
-          .execute()
+          .execute(),
       ).to.eql([
         { first_name: 'Arnold', last_name: 'Schwarzenegger', gender: 'male' },
         { first_name: 'Sylvester', last_name: 'Stallone', gender: 'male' },
@@ -80,7 +81,7 @@ for (const dialect of DIALECTS) {
           eb.or([
             eb('first_name', '=', 'Jennifer'),
             eb('first_name', '=', 'Arnold'),
-          ])
+          ]),
         )
 
       testSql(query, dialect, {
@@ -222,7 +223,7 @@ for (const dialect of DIALECTS) {
           .deleteFrom('person')
           .using('pet')
           .whereRef('pet.owner_id', '=', 'person.id')
-          .where('pet.species', '=', sql`${'NO_SUCH_SPECIES'}`)
+          .where('pet.species', '=', sql<Species>`${'NO_SUCH_SPECIES'}`)
 
         testSql(query, dialect, {
           postgres: {
@@ -486,7 +487,7 @@ for (const dialect of DIALECTS) {
           .deleteFrom('person')
           .using('person')
           .innerJoin('pet', 'pet.owner_id', 'person.id')
-          .where('pet.species', '=', sql`${'NO_SUCH_SPECIES'}`)
+          .where('pet.species', '=', sql<Species>`${'NO_SUCH_SPECIES'}`)
 
         testSql(query, dialect, {
           postgres: NOT_SUPPORTED,
@@ -511,7 +512,7 @@ for (const dialect of DIALECTS) {
           .deleteFrom('person')
           .using('person')
           .leftJoin('pet', 'pet.owner_id', 'person.id')
-          .where('pet.species', '=', sql`${'NO_SUCH_SPECIES'}`)
+          .where('pet.species', '=', sql<Species>`${'NO_SUCH_SPECIES'}`)
 
         testSql(query, dialect, {
           postgres: NOT_SUPPORTED,
@@ -539,9 +540,9 @@ for (const dialect of DIALECTS) {
           .leftJoin('toy', 'toy.pet_id', 'pet.id')
           .where(({ eb, or }) =>
             or([
-              eb('pet.species', '=', sql`${'NO_SUCH_SPECIES'}`),
+              eb('pet.species', '=', sql<Species>`${'NO_SUCH_SPECIES'}`),
               eb('toy.price', '=', 0),
-            ])
+            ]),
           )
 
         testSql(query, dialect, {
@@ -561,7 +562,7 @@ for (const dialect of DIALECTS) {
         const query = ctx.db
           .deleteFrom('person')
           .using(['person', 'pet'])
-          .where('pet.species', '=', sql`${'NO_SUCH_SPECIES'}`)
+          .where('pet.species', '=', sql<Species>`${'NO_SUCH_SPECIES'}`)
 
         testSql(query, dialect, {
           postgres: NOT_SUPPORTED,
@@ -862,8 +863,53 @@ for (const dialect of DIALECTS) {
             first_name,
             last_name,
             gender,
-          }))
+          })),
         )
+      })
+    }
+
+    if (dialect === 'mssql') {
+      it('should delete top', async () => {
+        const query = ctx.db
+          .deleteFrom('person')
+          .top(1)
+          .where('gender', '=', 'male')
+
+        testSql(query, dialect, {
+          postgres: NOT_SUPPORTED,
+          mysql: NOT_SUPPORTED,
+          mssql: {
+            sql: 'delete top(1) from "person" where "gender" = @1',
+            parameters: ['male'],
+          },
+          sqlite: NOT_SUPPORTED,
+        })
+
+        const result = await query.executeTakeFirst()
+
+        expect(result).to.be.instanceOf(DeleteResult)
+        expect(result.numDeletedRows).to.equal(1n)
+      })
+
+      it('should delete top percent', async () => {
+        const query = ctx.db
+          .deleteFrom('person')
+          .top(50, 'percent')
+          .where('gender', '=', 'male')
+
+        testSql(query, dialect, {
+          postgres: NOT_SUPPORTED,
+          mysql: NOT_SUPPORTED,
+          mssql: {
+            sql: 'delete top(50) percent from "person" where "gender" = @1',
+            parameters: ['male'],
+          },
+          sqlite: NOT_SUPPORTED,
+        })
+
+        const result = await query.executeTakeFirst()
+
+        expect(result).to.be.instanceOf(DeleteResult)
       })
     }
   })

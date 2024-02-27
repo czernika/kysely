@@ -62,6 +62,37 @@ export class CreateIndexBuilder<C = never>
   }
 
   /**
+   * Adds `nulls not distinct` specifier to index.
+   * This only works on some dialects like PostgreSQL.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * db.schema.createIndex('person_first_name_index')
+   *  .on('person')
+   *  .column('first_name')
+   *  .nullsNotDistinct()
+   *  .execute()
+   * ```
+   *
+   * The generated SQL (PostgreSQL):
+   *
+   * ```sql
+   * create index "person_first_name_index"
+   * on "test" ("first_name")
+   * nulls not distinct;
+   * ```
+   */
+  nullsNotDistinct(): CreateIndexBuilder<C> {
+    return new CreateIndexBuilder({
+      ...this.#props,
+      node: CreateIndexNode.cloneWith(this.#props.node, {
+        nullsNotDistinct: true,
+      }),
+    })
+  }
+
+  /**
    * Specifies the table for the index.
    */
   on(table: string): CreateIndexBuilder<C> {
@@ -97,7 +128,7 @@ export class CreateIndexBuilder<C = never>
    * ```
    */
   column<CL extends string>(
-    column: OrderedColumnName<CL>
+    column: OrderedColumnName<CL>,
   ): CreateIndexBuilder<C | ExtractColumnNameFromOrderedColumnName<CL>> {
     return new CreateIndexBuilder({
       ...this.#props,
@@ -130,13 +161,13 @@ export class CreateIndexBuilder<C = never>
    * ```
    */
   columns<CL extends string>(
-    columns: OrderedColumnName<CL>[]
+    columns: OrderedColumnName<CL>[],
   ): CreateIndexBuilder<C | ExtractColumnNameFromOrderedColumnName<CL>> {
     return new CreateIndexBuilder({
       ...this.#props,
       node: CreateIndexNode.cloneWithColumns(
         this.#props.node,
-        columns.map(parseOrderedColumnName)
+        columns.map(parseOrderedColumnName),
       ),
     })
   }
@@ -219,7 +250,7 @@ export class CreateIndexBuilder<C = never>
   where(
     lhs: C | Expression<any>,
     op: ComparisonOperatorExpression,
-    rhs: unknown
+    rhs: unknown,
   ): CreateIndexBuilder<C>
 
   where(
@@ -227,8 +258,8 @@ export class CreateIndexBuilder<C = never>
       qb: ExpressionBuilder<
         ShallowRecord<string, ShallowRecord<C & string, any>>,
         string
-      >
-    ) => Expression<SqlBool>
+      >,
+    ) => Expression<SqlBool>,
   ): CreateIndexBuilder<C>
 
   where(expression: Expression<SqlBool>): CreateIndexBuilder<C>
@@ -240,7 +271,7 @@ export class CreateIndexBuilder<C = never>
       ...this.#props,
       node: QueryNode.cloneWithWhere(
         this.#props.node,
-        transformer.transformNode(parseValueBinaryOperationOrExpression(args))
+        transformer.transformNode(parseValueBinaryOperationOrExpression(args)),
       ),
     })
   }
@@ -256,14 +287,14 @@ export class CreateIndexBuilder<C = never>
   toOperationNode(): CreateIndexNode {
     return this.#props.executor.transformQuery(
       this.#props.node,
-      this.#props.queryId
+      this.#props.queryId,
     )
   }
 
   compile(): CompiledQuery {
     return this.#props.executor.compileQuery(
       this.toOperationNode(),
-      this.#props.queryId
+      this.#props.queryId,
     )
   }
 
@@ -274,7 +305,7 @@ export class CreateIndexBuilder<C = never>
 
 preventAwait(
   CreateIndexBuilder,
-  "don't await CreateIndexBuilder instances directly. To execute the query you need to call `execute`"
+  "don't await CreateIndexBuilder instances directly. To execute the query you need to call `execute`",
 )
 
 export interface CreateIndexBuilderProps {

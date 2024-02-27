@@ -77,6 +77,29 @@ for (const dialect of DIALECTS) {
       })
     })
 
+    it('should insert one row with default values', async () => {
+      const query = ctx.db.insertInto('person').defaultValues()
+
+      testSql(query, dialect, {
+        postgres: {
+          sql: 'insert into "person" default values',
+          parameters: [],
+        },
+        mysql: {
+          sql: 'insert into `person` default values',
+          parameters: [],
+        },
+        mssql: {
+          sql: 'insert into "person" default values',
+          parameters: [],
+        },
+        sqlite: {
+          sql: 'insert into "person" default values',
+          parameters: [],
+        },
+      })
+    })
+
     it('should insert one row with complex values', async () => {
       const query = ctx.db.insertInto('person').values({
         first_name: ctx.db
@@ -118,50 +141,49 @@ for (const dialect of DIALECTS) {
       })
     })
 
-    it.skip('should insert one row with expressions', async () => {
-      const query = ctx.db.insertInto('person').values(({ selectFrom }) => ({
-        first_name: selectFrom('pet')
-          .select('name')
-          .where('species', '=', 'dog')
-          .limit(1),
-        gender: 'female',
-      }))
+    if (dialect !== 'mssql') {
+      it('should insert one row with expressions', async () => {
+        const query = ctx.db.insertInto('person').values(({ selectFrom }) => ({
+          first_name: selectFrom('pet')
+            .select('name')
+            .where('species', '=', 'dog')
+            .limit(1),
+          gender: 'female',
+        }))
 
-      testSql(query, dialect, {
-        postgres: {
-          sql: `insert into "person" ("first_name", "gender") values ((select "first_name" from "person" where "last_name" = $1 limit $2), $3)`,
-          parameters: ['Aniston', 1, 'female'],
-        },
-        mysql: {
-          sql: 'insert into `person` (`first_name`, `gender`) values ((select `first_name` from `person` where `last_name` = ? limit ?), ?)',
-          parameters: ['Aniston', 1, 'female'],
-        },
-        mssql: {
-          sql: `insert into "person" ("first_name", "gender") values ((select "first_name" from "person" where "last_name" = @1 limit @2), @3)`,
-          parameters: ['Aniston', 1, 'female'],
-        },
-        sqlite: {
-          sql: `insert into "person" ("first_name", "gender") values ((select "first_name" from "person" where "last_name" = ? limit ?), ?)`,
-          parameters: ['Aniston', 1, 'female'],
-        },
+        testSql(query, dialect, {
+          postgres: {
+            sql: `insert into "person" ("first_name", "gender") values ((select "name" from "pet" where "species" = $1 limit $2), $3)`,
+            parameters: ['dog', 1, 'female'],
+          },
+          mysql: {
+            sql: 'insert into `person` (`first_name`, `gender`) values ((select `name` from `pet` where `species` = ? limit ?), ?)',
+            parameters: ['dog', 1, 'female'],
+          },
+          sqlite: {
+            sql: `insert into "person" ("first_name", "gender") values ((select "name" from "pet" where "species" = ? limit ?), ?)`,
+            parameters: ['dog', 1, 'female'],
+          },
+          mssql: NOT_SUPPORTED,
+        })
+
+        const result = await query.executeTakeFirst()
+        expect(result).to.be.instanceOf(InsertResult)
+        expect(result.numInsertedOrUpdatedRows).to.equal(1n)
+
+        expect(await getNewestPerson(ctx.db)).to.eql({
+          first_name: 'Doggo',
+          last_name: null,
+        })
       })
-
-      const result = await query.executeTakeFirst()
-      expect(result).to.be.instanceOf(InsertResult)
-      expect(result.numInsertedOrUpdatedRows).to.equal(1n)
-
-      expect(await getNewestPerson(ctx.db)).to.eql({
-        first_name: 'Jennifer',
-        last_name: null,
-      })
-    })
+    }
 
     it('should insert the result of a select query', async () => {
       const query = ctx.db
         .insertInto('person')
         .columns(['first_name', 'gender'])
         .expression((eb) =>
-          eb.selectFrom('pet').select(['name', eb.val('other').as('gender')])
+          eb.selectFrom('pet').select(['name', eb.val('other').as('gender')]),
         )
 
       testSql(query, dialect, {
@@ -224,10 +246,10 @@ for (const dialect of DIALECTS) {
                     { a: 1, b: 'foo' },
                     { a: 2, b: 'bar' },
                   ],
-                  't'
-                )
+                  't',
+                ),
               )
-              .select(['t.a', 't.b'])
+              .select(['t.a', 't.b']),
           )
           .returning(['first_name', 'gender'])
 
@@ -464,7 +486,7 @@ for (const dialect of DIALECTS) {
           .insertInto('pet')
           .values(existingPet)
           .onConflict((oc) =>
-            oc.columns(['name']).doUpdateSet({ species: 'hamster' })
+            oc.columns(['name']).doUpdateSet({ species: 'hamster' }),
           )
 
         testSql(query, dialect, {
@@ -526,7 +548,7 @@ for (const dialect of DIALECTS) {
           .insertInto('pet')
           .values(existingPet)
           .onConflict((oc) =>
-            oc.constraint('pet_name_key').doUpdateSet({ species: 'hamster' })
+            oc.constraint('pet_name_key').doUpdateSet({ species: 'hamster' }),
           )
           .returningAll()
 
@@ -571,7 +593,7 @@ for (const dialect of DIALECTS) {
                 species: 'hamster',
                 name: (eb) => eb.ref('excluded.name'),
               })
-              .where('excluded.name', '!=', 'Doggo')
+              .where('excluded.name', '!=', 'Doggo'),
           )
           .returningAll()
 
@@ -880,10 +902,56 @@ for (const dialect of DIALECTS) {
         expect(people).to.eql(values)
       })
     }
+
+    if (dialect === 'mssql') {
+      it('should insert top', async () => {
+        const query = ctx.db
+          .insertInto('person')
+          .top(1)
+          .columns(['first_name', 'gender'])
+          .expression((eb) =>
+            eb.selectFrom('pet').select(['name', eb.val('other').as('gender')])
+          )
+
+        testSql(query, dialect, {
+          postgres: NOT_SUPPORTED,
+          mysql: NOT_SUPPORTED,
+          mssql: {
+            sql: 'insert top(1) into "person" ("first_name", "gender") select "name", @1 as "gender" from "pet"',
+            parameters: ['other'],
+          },
+          sqlite: NOT_SUPPORTED,
+        })
+
+        await query.executeTakeFirstOrThrow()
+      })
+
+      it('should insert top percent', async () => {
+        const query = ctx.db
+          .insertInto('person')
+          .top(50, 'percent')
+          .columns(['first_name', 'gender'])
+          .expression((eb) =>
+            eb.selectFrom('pet').select(['name', eb.val('other').as('gender')])
+          )
+
+        testSql(query, dialect, {
+          postgres: NOT_SUPPORTED,
+          mysql: NOT_SUPPORTED,
+          mssql: {
+            sql: 'insert top(50) percent into "person" ("first_name", "gender") select "name", @1 as "gender" from "pet"',
+            parameters: ['other'],
+          },
+          sqlite: NOT_SUPPORTED,
+        })
+
+        await query.executeTakeFirstOrThrow()
+      })
+    }
   })
 
   async function getNewestPerson(
-    db: Kysely<Database>
+    db: Kysely<Database>,
   ): Promise<Pick<Person, 'first_name' | 'last_name'> | undefined> {
     return await db
       .selectFrom('person')
@@ -891,7 +959,7 @@ for (const dialect of DIALECTS) {
       .where(
         'id',
         '=',
-        db.selectFrom('person').select(sql<number>`max(id)`.as('max_id'))
+        db.selectFrom('person').select(sql<number>`max(id)`.as('max_id')),
       )
       .executeTakeFirst()
   }
@@ -899,7 +967,7 @@ for (const dialect of DIALECTS) {
 
 function values<R extends Record<string, unknown>, A extends string>(
   records: R[],
-  alias: A
+  alias: A,
 ): AliasedRawBuilder<R, A> {
   const keys = Object.keys(records[0])
 
@@ -907,10 +975,10 @@ function values<R extends Record<string, unknown>, A extends string>(
     records.map((r) => {
       const v = sql.join(keys.map((k) => sql`${r[k]}`))
       return sql`(${v})`
-    })
+    }),
   )
 
   return sql<R>`(values ${values})`.as<A>(
-    sql.raw(`${alias}(${keys.join(', ')})`)
+    sql.raw(`${alias}(${keys.join(', ')})`),
   )
 }

@@ -37,8 +37,6 @@ import {
 import { UpdateQueryNode } from '../operation-node/update-query-node.js'
 import {
   UpdateObjectExpression,
-  UpdateObject,
-  UpdateObjectFactory,
   ExtractUpdateTypeFromReferenceExpression,
   parseUpdate,
 } from '../parser/update-set-parser.js'
@@ -68,7 +66,12 @@ import {
 import { KyselyTypeError } from '../util/type-error.js'
 import { Streamable } from '../util/streamable.js'
 import { ExpressionOrFactory } from '../parser/expression-parser.js'
-import { ValueExpression } from '../parser/value-parser.js'
+import {
+  ValueExpression,
+  parseValueExpression,
+} from '../parser/value-parser.js'
+import { LimitNode } from '../operation-node/limit-node.js'
+import { parseTop } from '../parser/top-parser.js'
 
 export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
   implements
@@ -85,14 +88,17 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
     this.#props = freeze(props)
   }
 
-  where<RE extends ReferenceExpression<DB, TB>>(
+  where<
+    RE extends ReferenceExpression<DB, TB>,
+    VE extends OperandValueExpressionOrList<DB, TB, RE>,
+  >(
     lhs: RE,
     op: ComparisonOperatorExpression,
-    rhs: OperandValueExpressionOrList<DB, TB, RE>
+    rhs: VE,
   ): UpdateQueryBuilder<DB, UT, TB, O>
 
-  where(
-    expression: ExpressionOrFactory<DB, TB, SqlBool>
+  where<E extends ExpressionOrFactory<DB, TB, SqlBool>>(
+    expression: E,
   ): UpdateQueryBuilder<DB, UT, TB, O>
 
   where(...args: any[]): any {
@@ -100,21 +106,24 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
       ...this.#props,
       queryNode: QueryNode.cloneWithWhere(
         this.#props.queryNode,
-        parseValueBinaryOperationOrExpression(args)
+        parseValueBinaryOperationOrExpression(args),
       ),
     })
   }
 
-  whereRef(
-    lhs: ReferenceExpression<DB, TB>,
+  whereRef<
+    LRE extends ReferenceExpression<DB, TB>,
+    RRE extends ReferenceExpression<DB, TB>,
+  >(
+    lhs: LRE,
     op: ComparisonOperatorExpression,
-    rhs: ReferenceExpression<DB, TB>
+    rhs: RRE,
   ): UpdateQueryBuilder<DB, UT, TB, O> {
     return new UpdateQueryBuilder({
       ...this.#props,
       queryNode: QueryNode.cloneWithWhere(
         this.#props.queryNode,
-        parseReferentialBinaryOperation(lhs, op, rhs)
+        parseReferentialBinaryOperation(lhs, op, rhs),
       ),
     })
   }
@@ -123,6 +132,58 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
     return new UpdateQueryBuilder({
       ...this.#props,
       queryNode: QueryNode.cloneWithoutWhere(this.#props.queryNode),
+    })
+  }
+
+  /**
+   * Changes an `update` query into a `update top` query.
+   *
+   * `top` clause is only supported by some dialects like MS SQL Server.
+   *
+   * ### Examples
+   *
+   * Update the first row:
+   *
+   * ```ts
+   * await db.updateTable('person')
+   *   .top(1)
+   *   .set({ first_name: 'Foo' })
+   *   .where('age', '>', 18)
+   *   .executeTakeFirstOrThrow()
+   * ```
+   *
+   * The generated SQL (MS SQL Server):
+   *
+   * ```sql
+   * update top(1) "person" set "first_name" = @1 where "age" > @2
+   * ```
+   *
+   * Update the 50% first rows:
+   *
+   * ```ts
+   * await db.updateTable('person')
+   *   .top(50, 'percent')
+   *   .set({ first_name: 'Foo' })
+   *   .where('age', '>', 18)
+   *   .executeTakeFirstOrThrow()
+   * ```
+   *
+   * The generated SQL (MS SQL Server):
+   *
+   * ```sql
+   * update top(50) percent "person" set "first_name" = @1 where "age" > @2
+   * ```
+   */
+  top(
+    expression: number | bigint,
+    modifiers?: 'percent',
+  ): UpdateQueryBuilder<DB, UT, TB, O> {
+    return new UpdateQueryBuilder({
+      ...this.#props,
+      queryNode: QueryNode.cloneWithTop(
+        this.#props.queryNode,
+        parseTop(expression, modifiers),
+      ),
     })
   }
 
@@ -154,11 +215,11 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
    * ```
    */
   from<TE extends TableExpression<DB, TB>>(
-    table: TE
+    table: TE,
   ): UpdateQueryBuilder<From<DB, TE>, UT, FromTables<DB, TB, TE>, O>
 
   from<TE extends TableExpression<DB, TB>>(
-    table: TE[]
+    table: TE[],
   ): UpdateQueryBuilder<From<DB, TE>, UT, FromTables<DB, TB, TE>, O>
 
   from(from: TableExpressionOrList<any, any>): any {
@@ -166,7 +227,7 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
       ...this.#props,
       queryNode: UpdateQueryNode.cloneWithFromItems(
         this.#props.queryNode,
-        parseTableExpressionOrList(from)
+        parseTableExpressionOrList(from),
       ),
     })
   }
@@ -283,16 +344,16 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
   innerJoin<
     TE extends TableExpression<DB, TB>,
     K1 extends JoinReferenceExpression<DB, TB, TE>,
-    K2 extends JoinReferenceExpression<DB, TB, TE>
+    K2 extends JoinReferenceExpression<DB, TB, TE>,
   >(
     table: TE,
     k1: K1,
-    k2: K2
+    k2: K2,
   ): UpdateQueryBuilderWithInnerJoin<DB, UT, TB, O, TE>
 
   innerJoin<
     TE extends TableExpression<DB, TB>,
-    FN extends JoinCallbackExpression<DB, TB, TE>
+    FN extends JoinCallbackExpression<DB, TB, TE>,
   >(table: TE, callback: FN): UpdateQueryBuilderWithInnerJoin<DB, UT, TB, O, TE>
 
   innerJoin(...args: any): any {
@@ -300,7 +361,7 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
       ...this.#props,
       queryNode: QueryNode.cloneWithJoin(
         this.#props.queryNode,
-        parseJoin('InnerJoin', args)
+        parseJoin('InnerJoin', args),
       ),
     })
   }
@@ -311,16 +372,16 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
   leftJoin<
     TE extends TableExpression<DB, TB>,
     K1 extends JoinReferenceExpression<DB, TB, TE>,
-    K2 extends JoinReferenceExpression<DB, TB, TE>
+    K2 extends JoinReferenceExpression<DB, TB, TE>,
   >(
     table: TE,
     k1: K1,
-    k2: K2
+    k2: K2,
   ): UpdateQueryBuilderWithLeftJoin<DB, UT, TB, O, TE>
 
   leftJoin<
     TE extends TableExpression<DB, TB>,
-    FN extends JoinCallbackExpression<DB, TB, TE>
+    FN extends JoinCallbackExpression<DB, TB, TE>,
   >(table: TE, callback: FN): UpdateQueryBuilderWithLeftJoin<DB, UT, TB, O, TE>
 
   leftJoin(...args: any): any {
@@ -328,7 +389,7 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
       ...this.#props,
       queryNode: QueryNode.cloneWithJoin(
         this.#props.queryNode,
-        parseJoin('LeftJoin', args)
+        parseJoin('LeftJoin', args),
       ),
     })
   }
@@ -339,16 +400,16 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
   rightJoin<
     TE extends TableExpression<DB, TB>,
     K1 extends JoinReferenceExpression<DB, TB, TE>,
-    K2 extends JoinReferenceExpression<DB, TB, TE>
+    K2 extends JoinReferenceExpression<DB, TB, TE>,
   >(
     table: TE,
     k1: K1,
-    k2: K2
+    k2: K2,
   ): UpdateQueryBuilderWithRightJoin<DB, UT, TB, O, TE>
 
   rightJoin<
     TE extends TableExpression<DB, TB>,
-    FN extends JoinCallbackExpression<DB, TB, TE>
+    FN extends JoinCallbackExpression<DB, TB, TE>,
   >(table: TE, callback: FN): UpdateQueryBuilderWithRightJoin<DB, UT, TB, O, TE>
 
   rightJoin(...args: any): any {
@@ -356,7 +417,7 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
       ...this.#props,
       queryNode: QueryNode.cloneWithJoin(
         this.#props.queryNode,
-        parseJoin('RightJoin', args)
+        parseJoin('RightJoin', args),
       ),
     })
   }
@@ -367,16 +428,16 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
   fullJoin<
     TE extends TableExpression<DB, TB>,
     K1 extends JoinReferenceExpression<DB, TB, TE>,
-    K2 extends JoinReferenceExpression<DB, TB, TE>
+    K2 extends JoinReferenceExpression<DB, TB, TE>,
   >(
     table: TE,
     k1: K1,
-    k2: K2
+    k2: K2,
   ): UpdateQueryBuilderWithFullJoin<DB, UT, TB, O, TE>
 
   fullJoin<
     TE extends TableExpression<DB, TB>,
-    FN extends JoinCallbackExpression<DB, TB, TE>
+    FN extends JoinCallbackExpression<DB, TB, TE>,
   >(table: TE, callback: FN): UpdateQueryBuilderWithFullJoin<DB, UT, TB, O, TE>
 
   fullJoin(...args: any): any {
@@ -384,7 +445,38 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
       ...this.#props,
       queryNode: QueryNode.cloneWithJoin(
         this.#props.queryNode,
-        parseJoin('FullJoin', args)
+        parseJoin('FullJoin', args),
+      ),
+    })
+  }
+
+  /**
+   * Adds a limit clause to the update query for supported databases, such as MySQL.
+   *
+   * ### Examples
+   *
+   * Update the first 2 rows in the 'person' table:
+   *
+   * ```ts
+   * return await db
+   *   .updateTable('person')
+   *   .set({ first_name: 'Foo' })
+   *   .limit(2);
+   * ```
+   *
+   * The generated SQL (MySQL):
+   * ```sql
+   * update `person` set `first_name` = 'Foo' limit 2
+   * ```
+   */
+  limit(
+    limit: ValueExpression<DB, TB, number>,
+  ): UpdateQueryBuilder<DB, UT, TB, O> {
+    return new UpdateQueryBuilder({
+      ...this.#props,
+      queryNode: UpdateQueryNode.cloneWithLimit(
+        this.#props.queryNode,
+        LimitNode.create(parseValueExpression(limit)),
       ),
     })
   }
@@ -529,10 +621,8 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
    * where "id" = $5
    * ```
    */
-  set(update: UpdateObject<DB, TB, UT>): UpdateQueryBuilder<DB, UT, TB, O>
-
   set(
-    update: UpdateObjectFactory<DB, TB, UT>
+    update: UpdateObjectExpression<DB, TB, UT>,
   ): UpdateQueryBuilder<DB, UT, TB, O>
 
   set<RE extends ReferenceExpression<DB, UT>>(
@@ -541,7 +631,7 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
       DB,
       TB,
       ExtractUpdateTypeFromReferenceExpression<DB, UT, RE>
-    >
+    >,
   ): UpdateQueryBuilder<DB, UT, TB, O>
 
   set(
@@ -553,31 +643,31 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
       ...this.#props,
       queryNode: UpdateQueryNode.cloneWithUpdates(
         this.#props.queryNode,
-        parseUpdate(...args)
+        parseUpdate(...args),
       ),
     })
   }
 
   returning<SE extends SelectExpression<DB, TB>>(
-    selections: ReadonlyArray<SE>
+    selections: ReadonlyArray<SE>,
   ): UpdateQueryBuilder<DB, UT, TB, ReturningRow<DB, TB, O, SE>>
 
   returning<CB extends SelectCallback<DB, TB>>(
-    callback: CB
+    callback: CB,
   ): UpdateQueryBuilder<DB, UT, TB, ReturningCallbackRow<DB, TB, O, CB>>
 
   returning<SE extends SelectExpression<DB, TB>>(
-    selection: SE
+    selection: SE,
   ): UpdateQueryBuilder<DB, UT, TB, ReturningRow<DB, TB, O, SE>>
 
   returning<SE extends SelectExpression<DB, TB>>(
-    selection: SelectArg<DB, TB, SE>
+    selection: SelectArg<DB, TB, SE>,
   ): UpdateQueryBuilder<DB, UT, TB, ReturningRow<DB, TB, O, SE>> {
     return new UpdateQueryBuilder({
       ...this.#props,
       queryNode: QueryNode.cloneWithReturning(
         this.#props.queryNode,
-        parseSelectArg(selection)
+        parseSelectArg(selection),
       ),
     })
   }
@@ -587,8 +677,34 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
       ...this.#props,
       queryNode: QueryNode.cloneWithReturning(
         this.#props.queryNode,
-        parseSelectAll()
+        parseSelectAll(),
       ),
+    })
+  }
+
+  /**
+   * Clears all `returning` clauses from the query.
+   *
+   * ### Examples
+   *
+   * ```ts
+   * db.updateTable('person')
+   *   .returningAll()
+   *   .set({ age: 39 })
+   *   .where('first_name', '=', 'John')
+   *   .clearReturning()
+   * ```
+   *
+   * The generated SQL(PostgreSQL):
+   *
+   * ```sql
+   * update "person" set "age" = 39 where "first_name" = "John"
+   * ```
+   */
+  clearReturning(): UpdateQueryBuilder<DB, UT, TB, UpdateResult> {
+    return new UpdateQueryBuilder({
+      ...this.#props,
+      queryNode: QueryNode.cloneWithoutReturning(this.#props.queryNode),
     })
   }
 
@@ -657,7 +773,7 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
    */
   $if<O2>(
     condition: boolean,
-    func: (qb: this) => UpdateQueryBuilder<any, any, any, O2>
+    func: (qb: this) => UpdateQueryBuilder<any, any, any, O2>,
   ): O2 extends UpdateResult
     ? UpdateQueryBuilder<DB, UT, TB, UpdateResult>
     : O2 extends O & infer E
@@ -675,10 +791,10 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
   /**
    * Change the output type of the query.
    *
-   * You should only use this method as the last resort if the types
-   * don't support your use case.
+   * This method call doesn't change the SQL in any way. This methods simply
+   * returns a copy of this `UpdateQueryBuilder` with a new output type.
    */
-  $castTo<T>(): UpdateQueryBuilder<DB, UT, TB, T> {
+  $castTo<C>(): UpdateQueryBuilder<DB, UT, TB, C> {
     return new UpdateQueryBuilder(this.#props)
   }
 
@@ -792,14 +908,14 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
   toOperationNode(): UpdateQueryNode {
     return this.#props.executor.transformQuery(
       this.#props.queryNode,
-      this.#props.queryId
+      this.#props.queryId,
     )
   }
 
   compile(): CompiledQuery<SimplifyResult<O>> {
     return this.#props.executor.compileQuery(
       this.toOperationNode(),
-      this.#props.queryId
+      this.#props.queryId,
     )
   }
 
@@ -814,7 +930,7 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
 
     const result = await this.#props.executor.executeQuery<O>(
       compiledQuery,
-      this.#props.queryId
+      this.#props.queryId,
     )
 
     if (this.#props.executor.adapter.supportsReturning && query.returning) {
@@ -826,7 +942,7 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
         // TODO: remove numUpdatedOrDeletedRows.
         // TODO: https://github.com/kysely-org/kysely/pull/431#discussion_r1172330899
         result.numAffectedRows ?? result.numUpdatedOrDeletedRows ?? BigInt(0),
-        result.numChangedRows
+        result.numChangedRows,
       ) as any,
     ]
   }
@@ -851,7 +967,7 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
   async executeTakeFirstOrThrow(
     errorConstructor:
       | NoResultErrorConstructor
-      | ((node: QueryNode) => Error) = NoResultError
+      | ((node: QueryNode) => Error) = NoResultError,
   ): Promise<SimplifyResult<O>> {
     const result = await this.executeTakeFirst()
 
@@ -872,7 +988,7 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
     const stream = this.#props.executor.stream<O>(
       compiledQuery,
       chunkSize,
-      this.#props.queryId
+      this.#props.queryId,
     )
 
     for await (const item of stream) {
@@ -882,14 +998,14 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
 
   async explain<ER extends Record<string, any> = Record<string, any>>(
     format?: ExplainFormat,
-    options?: Expression<any>
+    options?: Expression<any>,
   ): Promise<ER[]> {
     const builder = new UpdateQueryBuilder<DB, UT, TB, ER>({
       ...this.#props,
       queryNode: QueryNode.cloneWithExplain(
         this.#props.queryNode,
         format,
-        options
+        options,
       ),
     })
 
@@ -899,7 +1015,7 @@ export class UpdateQueryBuilder<DB, UT extends keyof DB, TB extends keyof DB, O>
 
 preventAwait(
   UpdateQueryBuilder,
-  "don't await UpdateQueryBuilder instances directly. To execute the query you need to call `execute` or `executeTakeFirst`."
+  "don't await UpdateQueryBuilder instances directly. To execute the query you need to call `execute` or `executeTakeFirst`.",
 )
 
 export interface UpdateQueryBuilderProps {
@@ -913,7 +1029,7 @@ export type UpdateQueryBuilderWithInnerJoin<
   UT extends keyof DB,
   TB extends keyof DB,
   O,
-  TE extends TableExpression<DB, TB>
+  TE extends TableExpression<DB, TB>,
 > = TE extends `${infer T} as ${infer A}`
   ? T extends keyof DB
     ? InnerJoinedBuilder<DB, UT, TB, O, A, DB[T]>
@@ -932,7 +1048,7 @@ type InnerJoinedBuilder<
   TB extends keyof DB,
   O,
   A extends string,
-  R
+  R,
 > = A extends keyof DB
   ? UpdateQueryBuilder<InnerJoinedDB<DB, A, R>, UT, TB | A, O>
   : // Much faster non-recursive solution for the simple case.
@@ -947,7 +1063,7 @@ export type UpdateQueryBuilderWithLeftJoin<
   UT extends keyof DB,
   TB extends keyof DB,
   O,
-  TE extends TableExpression<DB, TB>
+  TE extends TableExpression<DB, TB>,
 > = TE extends `${infer T} as ${infer A}`
   ? T extends keyof DB
     ? LeftJoinedBuilder<DB, UT, TB, O, A, DB[T]>
@@ -966,7 +1082,7 @@ type LeftJoinedBuilder<
   TB extends keyof DB,
   O,
   A extends keyof any,
-  R
+  R,
 > = A extends keyof DB
   ? UpdateQueryBuilder<LeftJoinedDB<DB, A, R>, UT, TB | A, O>
   : // Much faster non-recursive solution for the simple case.
@@ -985,7 +1101,7 @@ export type UpdateQueryBuilderWithRightJoin<
   UT extends keyof DB,
   TB extends keyof DB,
   O,
-  TE extends TableExpression<DB, TB>
+  TE extends TableExpression<DB, TB>,
 > = TE extends `${infer T} as ${infer A}`
   ? T extends keyof DB
     ? RightJoinedBuilder<DB, UT, TB, O, A, DB[T]>
@@ -1004,14 +1120,14 @@ type RightJoinedBuilder<
   TB extends keyof DB,
   O,
   A extends keyof any,
-  R
+  R,
 > = UpdateQueryBuilder<RightJoinedDB<DB, TB, A, R>, UT, TB | A, O>
 
 type RightJoinedDB<
   DB,
   TB extends keyof DB,
   A extends keyof any,
-  R
+  R,
 > = DrainOuterGeneric<{
   [C in keyof DB | A]: C extends A
     ? R
@@ -1027,7 +1143,7 @@ export type UpdateQueryBuilderWithFullJoin<
   UT extends keyof DB,
   TB extends keyof DB,
   O,
-  TE extends TableExpression<DB, TB>
+  TE extends TableExpression<DB, TB>,
 > = TE extends `${infer T} as ${infer A}`
   ? T extends keyof DB
     ? OuterJoinedBuilder<DB, UT, TB, O, A, DB[T]>
@@ -1046,14 +1162,14 @@ type OuterJoinedBuilder<
   TB extends keyof DB,
   O,
   A extends keyof any,
-  R
+  R,
 > = UpdateQueryBuilder<OuterJoinedBuilderDB<DB, TB, A, R>, UT, TB | A, O>
 
 type OuterJoinedBuilderDB<
   DB,
   TB extends keyof DB,
   A extends keyof any,
-  R
+  R,
 > = DrainOuterGeneric<{
   [C in keyof DB | A]: C extends A
     ? Nullable<R>
